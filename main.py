@@ -1,7 +1,7 @@
 import flet as ft
 from src.core.database import init_database
+from src.ui.components.menu_bar import create_menu_bar
 from src.utils.helpers import show_coming_soon
-from src.ui.components.menu_bar import create_menu_bar   #Menu Bar
 
 def main(page: ft.Page):
     page.title = "Building Block - Data App"
@@ -11,41 +11,51 @@ def main(page: ft.Page):
     page.window_height = 800
     page.expand = True
 
-    # Initialize Database
     init_database()
 
-    # ==================== MAIN CONTENT ====================
-    status = ft.Text("Status: Ready", color=ft.Colors.GREEN_700, size=14)
+    # ==================== RESPONSIVE ROW LAYOUT ====================
 
-    def test_clicked(e):
-        show_coming_soon(page, "Test Data Tools")
-
-    test_button = ft.Button(
-        "Test Button (Future Tools)",
-        on_click=test_clicked,
-        bgcolor=ft.Colors.BLUE_700,
-        color=ft.Colors.WHITE,
-        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))
+    # Left Panel - Rack & Amp Selection
+    left_panel = ft.Container(
+        content=ft.Text("Rack & Amp Selection", size=16, weight=ft.FontWeight.BOLD),
+        bgcolor=ft.Colors.BLUE_50,
+        padding=15,
+        border_radius=8,
+        col={"sm": 3, "md": 3, "lg": 2},   # Narrow on large screens
+        expand=False
     )
 
-    main_content = ft.Column(
+    # Right Panel - Main Content Area
+    right_panel = ft.Container(
+        content=ft.Text("More Stuff", size=16, weight=ft.FontWeight.BOLD),                       # Empty for now
+        bgcolor=ft.Colors.PURPLE_50,
+        padding=20,
+        border_radius=8,
+        col={"sm": 9, "md": 9, "lg": 10},   # Takes most of the space
+        expand=True
+    )
+
+    # Main Responsive Layout
+    main_content = ft.ResponsiveRow(
         [
-            ft.Text("Main Content Area - Tables & Forms will go here", 
-                    size=18, weight=ft.FontWeight.BOLD),
-            test_button,
-            status,
+            left_panel,
+            right_panel,
         ],
-        spacing=20,
-        expand=True,
-        scroll=ft.ScrollMode.AUTO,
+        spacing=10,
+        expand=False,
+        columns=12
     )
 
-    # Final Layout
+    # Final Page Layout
     page.add(
         ft.Column(
             [
-                create_menu_bar(),
-                ft.Container(content=main_content, padding=20, expand=True),
+                create_menu_bar(page),
+                ft.Container(
+                    content=main_content,
+                    padding=10,
+                    expand=True
+                ),
             ],
             expand=True,
         )
