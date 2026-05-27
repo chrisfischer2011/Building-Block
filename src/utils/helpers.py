@@ -1,20 +1,12 @@
-import flet as ft
+"""
+Legacy helpers module.
 
-def show_coming_soon(page: ft.Page, feature_name: str = "This feature"):
-    """Reusable Coming Soon dialog - Compatible with Flet 0.85.1"""
-    
-    def close_dlg(e):
-        page.pop_dialog()        # Best method for v0.85+
-        # Alternative: page.close_dialog()
+Most new feedback utilities live in src/utils/feedback.py.
+This file re-exports show_coming_soon for backward compatibility.
+"""
 
-    dlg = ft.AlertDialog(
-        title=ft.Text("Coming Soon"),
-        content=ft.Text(f"{feature_name} is under development.\n\nStay tuned!"),
-        actions=[
-            ft.TextButton("OK", on_click=close_dlg)
-        ],
-        actions_alignment=ft.MainAxisAlignment.END,
-    )
+from src.utils.feedback import show_coming_soon  # noqa: F401
 
-    # Open the dialog
-    page.show_dialog(dlg)
+# Note: The old dialog-based implementation has been replaced with a
+# SnackBar-first approach (much better during development).
+# Use show_coming_soon(page, "Feature") — it now shows a SnackBar by default.

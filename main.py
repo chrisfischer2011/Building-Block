@@ -1,9 +1,10 @@
 import flet as ft
 from src.core.database import init_database
+from src.ui.app_state import AppState
 from src.ui.components.menu_bar import create_menu_bar
 from src.ui.main_layout import create_main_layout
 from src.ui.theme import CONTENT_PADDING, create_app_theme
-from src.utils.helpers import show_coming_soon
+
 
 def main(page: ft.Page):
     page.title = "Building Block - Data App"
@@ -26,7 +27,7 @@ def main(page: ft.Page):
             [
                 create_menu_bar(page),
                 ft.Container(
-                    content=create_main_layout(page),
+                    content=create_main_layout(page, AppState()),
                     padding=CONTENT_PADDING,
                     expand=True
                 ),
@@ -36,6 +37,4 @@ def main(page: ft.Page):
     )
 
 if __name__ == "__main__":
-    ft.app(target=main)
-
-    
+    ft.run(main)

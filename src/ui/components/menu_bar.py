@@ -1,6 +1,6 @@
 import flet as ft
 from src.ui.theme import HEADER_ELEVATION, HEADER_HEIGHT, HEADER_MENU_SPACING, HEADER_PADDING
-from src.utils.helpers import show_coming_soon
+from src.utils.feedback import show_coming_soon
 
 def create_menu_bar(page: ft.Page):
     """Creates the top application header bar.
