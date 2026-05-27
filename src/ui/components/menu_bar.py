@@ -1,8 +1,16 @@
 import flet as ft
+from src.ui.theme import HEADER_ELEVATION, HEADER_HEIGHT, HEADER_MENU_SPACING, HEADER_PADDING
 from src.utils.helpers import show_coming_soon
 
 def create_menu_bar(page: ft.Page):
-    """Returns the custom menu bar for the app"""
+    """Creates the top application header bar.
+    
+    Features:
+    - Theme-driven colors, spacing, and elevation
+    - Robust three-section layout (menus / title / spacer)
+    - Consistent text-based menu triggers
+    - Subtle shadow for visual separation
+    """
     
     def file_new(e): 
         show_coming_soon(page, "New File")
@@ -19,61 +27,73 @@ def create_menu_bar(page: ft.Page):
     def about_clicked(e): 
         show_coming_soon(page, "About this App")
 
-    return ft.Container(
+    # Pull colors from the active theme
+    color_scheme = page.theme.color_scheme
+    header_bg = color_scheme.primary
+    header_text = color_scheme.on_primary
+
+    # Header content (inner container handles styling)
+    header_content = ft.Container(
         content=ft.Row(
             [
-                # Left Side - Menus
+                # Left section - Menus (standardized text-based triggers)
                 ft.Row(
                     [
                         ft.PopupMenuButton(
-                            icon=ft.Icons.MENU,
-                            icon_color=ft.Colors.WHITE,
+                            content=ft.Text("File", color=header_text),
                             tooltip="File",
                             items=[
                                 ft.PopupMenuItem(content=ft.Text("New"), on_click=file_new),
                                 ft.PopupMenuItem(),  
                                 ft.PopupMenuItem(content=ft.Text("Save"), on_click=file_save),
                                 ft.PopupMenuItem(content=ft.Text("Load"), on_click=file_load),
-                            ]
+                            ],
                         ),
-                        ft.Container(
-                            content=ft.PopupMenuButton(
-                                content=ft.Text("Settings", color=ft.Colors.WHITE),
-                                tooltip="Settings",
-                                items=[ft.PopupMenuItem(content=ft.Text("Preferences"), on_click=settings_clicked)],
-                            ),
-                            padding=7,
+                        ft.PopupMenuButton(
+                            content=ft.Text("Settings", color=header_text),
+                            tooltip="Settings",
+                            items=[
+                                ft.PopupMenuItem(content=ft.Text("Preferences"), on_click=settings_clicked),
+                            ],
                         ),
-                        ft.Container(width=5),
-                        ft.Container(
-                            content=ft.PopupMenuButton(
-                                content=ft.Text("About", color=ft.Colors.WHITE),
-                                tooltip="About",
-                                items=[ft.PopupMenuItem(content=ft.Text("About this App"), on_click=about_clicked)],
-                            ),
-                            padding=7,
+                        ft.PopupMenuButton(
+                            content=ft.Text("About", color=header_text),
+                            tooltip="About",
+                            items=[
+                                ft.PopupMenuItem(content=ft.Text("About this App"), on_click=about_clicked),
+                            ],
                         ),
                     ],
-                    spacing=5,
+                    spacing=HEADER_MENU_SPACING,
+                    expand=1,
                 ),
                 
-                # Center Title
+                # Center Title - Properly centered using expand ratio
                 ft.Text(
                     "Building Block", 
                     size=26, 
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.WHITE,
-                    expand=True,
-                    text_align=ft.TextAlign.CENTER
+                    color=header_text,
+                    expand=2,
+                    text_align=ft.TextAlign.CENTER,
                 ),
                 
-                # Right padding
-                ft.Container(width=50)
+                # Right section (spacer for balance - can hold future actions)
+                ft.Container(expand=1),
             ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        bgcolor=ft.Colors.BLUE_700,
-        padding=15,
-        height=65,
+        bgcolor=header_bg,
+        padding=HEADER_PADDING,
+        height=HEADER_HEIGHT,
+        border=ft.Border(
+            bottom=ft.BorderSide(width=1, color=color_scheme.outline)
+        ),
+    )
+
+    # Use Card to provide elevation (Container does not support 'elevation' in Flet 0.85)
+    return ft.Card(
+        content=header_content,
+        elevation=HEADER_ELEVATION,
+        margin=0,           # Full width, no default card margins
     )
