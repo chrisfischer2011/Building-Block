@@ -23,12 +23,31 @@ from src.ui.theme import (
 def _get_seed_data() -> list[DataEntry]:
     """Return some initial sample data when the database is empty."""
     return [
-        DataEntry(id=1, category="Rack", value=1200, notes="Main rack A1"),
-        DataEntry(id=2, category="Rack", value=950, notes="Rack B2"),
-        DataEntry(id=3, category="Amplifier", value=450, notes="Amp X-500"),
-        DataEntry(id=4, category="Amplifier", value=780, notes="Amp Pro-200"),
-        DataEntry(id=5, category="Rack", value=1100, notes="Rack C3"),
-        DataEntry(id=6, category="Amplifier", value=320, notes="Amp Mini-100"),
+        DataEntry(
+            id=1,
+            name="Rack A1",
+            device_type="Rack",
+            properties={
+                "rack_location": "Stage Left",
+                "rack_number": 1,
+                "rack_type": "Main",
+            },
+            notes="Main rack A1",
+        ),
+        DataEntry(
+            id=2,
+            name="Rack B2",
+            device_type="Rack",
+            properties={"rack_number": 2},
+            notes="Rack B2",
+        ),
+        DataEntry(
+            id=3,
+            name="Amp X-500",
+            device_type="Amplifier",
+            properties={"model": "X-500"},
+            notes="Amp X-500",
+        ),
     ]
 
 
@@ -145,8 +164,13 @@ def _rebuild_item_list(
             and app_state.selected_item.id == item.id
         )
 
-        display_name = f"{item.category} - {item.value}"
-        icon = ft.Icons.SETTINGS if item.category.lower() == "rack" else ft.Icons.SPEAKER
+        # Display based on device_type
+        if item.device_type.lower() == "rack":
+            display_name = item.name or f"Rack {item.properties.get('rack_number', '')}".strip()
+            icon = ft.Icons.SETTINGS
+        else:
+            display_name = item.name or item.properties.get("model", "Amplifier")
+            icon = ft.Icons.SPEAKER
 
         tile = ft.Container(
             content=ft.Row(

@@ -11,7 +11,7 @@ import flet as ft
 import pandas as pd
 
 from src.core.database import save_to_db
-from src.core.models import DataEntry
+from src.core.models import Device, get_fields_for_device, get_options_for_field
 from src.ui.theme import (
     CARD_CONTENT_PADDING,
     CARD_ELEVATION_LOW,
@@ -34,60 +34,150 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
 
     # === CREATE MODE ===
     if app_state.is_creating:
-        category_ref = ft.Ref[ft.TextField]()
-        value_ref = ft.Ref[ft.TextField]()
-        notes_ref = ft.Ref[ft.TextField]()
+        device_type_ref = ft.Ref[ft.Dropdown]()
+        name_ref = ft.Ref[ft.TextField]()
+        dynamic_fields_container = ft.Ref[ft.Container]()
+
+        # We will store values in this dict instead of relying only on refs
+        # because some fields are Dropdowns (which don't use the same ref pattern easily)
+        dynamic_field_values: dict[str, str] = {}
+
+        def _update_field_value(field_name: str, value: str):
+            dynamic_field_values[field_name] = value or ""
+
+        def _rebuild_dynamic_fields(device_type: str):
+            """Rebuild the list of fields based on the selected device type."""
+            fields = get_fields_for_device(device_type)
+            controls = []
+            dynamic_field_values.clear()
+
+            for field_name in fields:
+                options = get_options_for_field(field_name)
+
+                if options:
+                    # Dropdown
+                    dropdown = ft.Dropdown(
+                        label=field_name,
+                        options=[ft.dropdown.Option(o) for o in options],
+                        height=50,
+                        on_change=lambda e, fname=field_name: _update_field_value(fname, e.control.value),
+                    )
+                    controls.append(dropdown)
+                else:
+                    # Free text
+                    ref = ft.Ref[ft.TextField]()
+                    dynamic_field_values[field_name] = ""
+
+                    def make_on_change(fname, r):
+                        def handler(e):
+                            if r.current:
+                                _update_field_value(fname, r.current.value)
+                        return handler
+
+                    controls.append(
+                        ft.TextField(
+                            ref=ref,
+                            label=field_name,
+                            height=45,
+                            text_size=14,
+                            on_change=make_on_change(field_name, ref),
+                        )
+                    )
+
+            if dynamic_fields_container.current:
+                dynamic_fields_container.current.content = ft.Column(controls, spacing=6)
+                dynamic_fields_container.current.update()
+
+        def _on_device_type_change(e):
+            _rebuild_dynamic_fields(device_type_ref.current.value or "Rack")
 
         def _create_entry(e):
             try:
-                new_entry = DataEntry(
-                    category=category_ref.current.value or "",
-                    value=float(value_ref.current.value or 0),
-                    notes=notes_ref.current.value or "",
+                dev_type = device_type_ref.current.value or "Rack"
+                name = name_ref.current.value or ""
+
+                # Capture any remaining TextField values
+                for fname, ref in list(dynamic_field_values.items()):
+                    # This is a bit hacky but works for mixed controls
+                    pass
+
+                new_device = Device(
+                    name=name,
+                    device_type=dev_type,
+                    properties=dynamic_field_values.copy(),
+                    notes="",
                 )
-                # Save to database
-                import pandas as pd
-                df = pd.DataFrame([new_entry.to_dict()])
+
+                df = pd.DataFrame([new_device.to_dict()])
                 save_to_db(df, "input_data")
 
-                # Exit create mode and select the new item (approximate by clearing for now)
                 app_state.finish_creating()
-                # For better UX we would reload and select the new item.
-                # For now we just refresh the UI.
                 page.update()
             except Exception as ex:
                 show_coming_soon(page, f"Create failed: {ex}")
+
+        # Initial fields for default selection ("Rack")
+        initial_fields = get_fields_for_device("Rack")
+        initial_controls = []
+        for field_name in initial_fields:
+            options = get_options_for_field(field_name)
+            if options:
+                initial_controls.append(ft.Dropdown(
+                    label=field_name,
+                    options=[ft.dropdown.Option(o) for o in options],
+                    height=50,
+                    on_change=lambda e, fname=field_name: _update_field_value(fname, e.control.value),
+                ))
+            else:
+                ref = ft.Ref[ft.TextField]()
+                dynamic_field_values[field_name] = ""
+
+                def make_handler(fname, r):
+                    def handler(e):
+                        if r.current:
+                            _update_field_value(fname, r.current.value)
+                    return handler
+
+                initial_controls.append(ft.TextField(
+                    ref=ref,
+                    label=field_name,
+                    height=45,
+                    text_size=14,
+                    on_change=make_handler(field_name, ref),
+                ))
 
         content = ft.Container(
             content=ft.Column(
                 [
                     ft.Text(
-                        "Create New Entry",
+                        "Create New Device",
                         size=15,
                         weight=ft.FontWeight.BOLD,
                         color=color_scheme.on_secondary_container,
                     ),
+                    ft.Dropdown(
+                        ref=device_type_ref,
+                        label="Device Type",
+                        options=[
+                            ft.dropdown.Option("Rack"),
+                            ft.dropdown.Option("Amplifier"),
+                        ],
+                        value="Rack",
+                        height=50,
+                        on_change=_on_device_type_change,
+                    ),
                     ft.TextField(
-                        label="Category",
-                        ref=category_ref,
+                        ref=name_ref,
+                        label="Name / Identifier",
                         height=45,
                         text_size=14,
                     ),
-                    ft.TextField(
-                        label="Value",
-                        ref=value_ref,
-                        height=45,
-                        text_size=14,
-                    ),
-                    ft.TextField(
-                        label="Notes",
-                        ref=notes_ref,
-                        height=45,
-                        text_size=14,
-                        multiline=True,
+                    ft.Container(
+                        ref=dynamic_fields_container,
+                        content=ft.Column(initial_controls, spacing=6),
                     ),
                     ft.ElevatedButton(
-                        "Create Entry",
+                        "Create Device",
                         icon=ft.Icons.ADD,
                         on_click=_create_entry,
                     ),
@@ -156,7 +246,7 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                         color=color_scheme.on_secondary_container,
                     ),
                     ft.Text(
-                        f"Editing: {display_name}",
+                        f"Editing {item.device_type}: {display_name}",
                         weight=ft.FontWeight.W_500,
                         color=color_scheme.on_secondary_container,
                     ),
