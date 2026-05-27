@@ -9,6 +9,8 @@ structured solution later if needed.
 from dataclasses import dataclass, field
 from typing import Optional
 
+from src.core.models import DataEntry
+
 
 @dataclass
 class AppState:
@@ -17,17 +19,29 @@ class AppState:
     # Sidebar width (persisted in memory for now)
     sidebar_width: float = 280.0
 
-    # Currently selected item (very basic for Phase 5)
-    # In the future this can become a proper model / dataclass.
-    selected_item: Optional[dict] = field(default=None)
+    # Currently selected item (now using proper DataEntry model)
+    selected_item: Optional[DataEntry] = field(default=None)
 
-    def select_item(self, item: dict) -> None:
-        """Select an item (used by RackAmpSelector)."""
+    # Whether the Inspector is in "Create New" mode
+    is_creating: bool = False
+
+    def select_item(self, item: DataEntry) -> None:
+        """Select an item and exit create mode."""
         self.selected_item = item
+        self.is_creating = False
 
     def clear_selection(self) -> None:
         """Clear the current selection."""
         self.selected_item = None
+
+    def start_creating(self) -> None:
+        """Switch the Inspector into Create mode."""
+        self.is_creating = True
+        self.selected_item = None
+
+    def finish_creating(self) -> None:
+        """Exit create mode."""
+        self.is_creating = False
 
     @property
     def has_selection(self) -> bool:

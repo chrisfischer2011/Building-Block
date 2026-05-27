@@ -68,14 +68,16 @@ def create_menu_bar(page: ft.Page):
                     expand=1,
                 ),
                 
-                # Center Title - Properly centered using expand ratio
-                ft.Text(
-                    "Building Block", 
-                    size=26, 
-                    weight=ft.FontWeight.BOLD,
-                    color=header_text,
+                # Center Title - Better visual centering
+                ft.Container(
+                    content=ft.Text(
+                        "Building Block",
+                        size=26,
+                        weight=ft.FontWeight.BOLD,
+                        color=header_text,
+                    ),
                     expand=2,
-                    text_align=ft.TextAlign.CENTER,
+                    alignment=ft.Alignment.CENTER,
                 ),
                 
                 # Right section (spacer for balance - can hold future actions)

@@ -14,11 +14,17 @@ HEADER_MENU_SPACING = 8
 HEADER_ELEVATION = 4
 
 # General spacing & padding
-CONTENT_PADDING = 10
+CONTENT_PADDING = 12  # Increased for better overall breathing room
 CARD_CONTENT_PADDING = 16
-CARD_MARGIN = 4
-PANEL_SPACING = 4
-MAIN_CONTENT_SPACING = 8
+CARD_MARGIN = 6  # Slightly increased for better panel separation
+PANEL_SPACING = 12  # Increased for better breathing room between panels
+
+# Component-specific spacing tokens (for consistency across panels)
+LIST_ITEM_SPACING = 6
+FORM_SPACING = 10
+EMPTY_STATE_PADDING = 30
+
+# MAIN_CONTENT_SPACING = 8   # Currently unused after Phase 5 refactor
 
 # Elevation
 CARD_ELEVATION = 2
@@ -59,5 +65,9 @@ def create_app_theme() -> ft.Theme:
             outline=ft.Colors.BLUE_200,
             shadow=ft.Colors.BLACK26,
         ),
-        # Future: text themes, button themes, etc. can be added here
+        text_theme=ft.TextTheme(
+            body_medium=ft.TextStyle(size=14),
+            title_medium=ft.TextStyle(size=16, weight=ft.FontWeight.W_500),
+        ),
+        # Future: button themes, etc. can be added here
     )

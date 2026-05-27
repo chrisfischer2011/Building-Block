@@ -8,27 +8,39 @@ Replaces the previous "Editable Area".
 """
 
 import flet as ft
-from src.ui.theme import CARD_CONTENT_PADDING, CARD_ELEVATION_LOW, CARD_MARGIN
+from src.ui.theme import (
+    CARD_CONTENT_PADDING,
+    CARD_ELEVATION_LOW,
+    CARD_MARGIN,
+    EMPTY_STATE_PADDING,
+)  # Note: we use color_scheme.on_tertiary_container in the function
 from src.utils.feedback import show_coming_soon
 
 
 def create_main_content(page: ft.Page, app_state) -> ft.Card:
     """Creates the main content / workspace area."""
     color_scheme = page.theme.color_scheme
+    text_color = color_scheme.on_tertiary_container
 
     if not app_state.has_selection:
         inner_content = ft.Container(
             content=ft.Column(
                 [
-                    ft.Icon(ft.Icons.INBOX, size=48, color=ft.Colors.GREY_400),
+                    ft.Icon(ft.Icons.INBOX, size=48, color=text_color),
                     ft.Text(
                         "Select an item from the sidebar",
                         size=14,
-                        color=ft.Colors.GREY_600,
+                        color=text_color,
+                    ),
+                    ft.Text(
+                        "The selected item's details and editor will appear here.",
+                        size=12,
+                        color=text_color,
+                        text_align=ft.TextAlign.CENTER,
                     ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
+                spacing=EMPTY_STATE_PADDING,  # Uses token for consistency
             ),
             alignment=ft.Alignment.CENTER,
             expand=True,
@@ -37,12 +49,17 @@ def create_main_content(page: ft.Page, app_state) -> ft.Card:
         item = app_state.selected_item
         inner_content = ft.Column(
             [
-                ft.Text(f"Details for {item.get('name')}", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text(f"Details for {item}", size=16, weight=ft.FontWeight.BOLD, color=text_color),
                 ft.Divider(),
                 ft.Text(
-                    "This area will contain configuration, measurements, "
-                    "notes, and other editable content.",
+                    f"Category: {item.category} | Value: {item.value}",
                     size=13,
+                    color=text_color,
+                ),
+                ft.Text(
+                    item.notes or "No notes available.",
+                    size=13,
+                    color=text_color,
                 ),
                 ft.ElevatedButton(
                     "Open Advanced Editor",
@@ -50,7 +67,7 @@ def create_main_content(page: ft.Page, app_state) -> ft.Card:
                     on_click=lambda e: show_coming_soon(page, "Advanced Editor"),
                 ),
             ],
-            spacing=10,
+            spacing=12,  # Content area spacing (can be tokenized later if needed)
         )
 
     return ft.Card(
