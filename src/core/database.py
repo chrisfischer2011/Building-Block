@@ -37,11 +37,11 @@ def init_database():
             if col_name not in existing_columns:
                 try:
                     conn.execute(f"ALTER TABLE input_data ADD COLUMN {col_name} {col_type}")
-                    print(f"✅ Added column '{col_name}' to input_data table.")
+                    print(f"Added column '{col_name}' to input_data table.")
                 except Exception as e:
                     print(f"Warning: Could not add column {col_name}: {e}")
 
-        print("✅ Database initialized successfully.")
+        print("Database initialized successfully.")
         
         # Optional: Create a sample reference table
         conn.execute("""
@@ -62,3 +62,12 @@ def load_from_db(table_name: str = "input_data") -> pd.DataFrame:
     """Load data into Pandas DataFrame"""
     with get_db_connection() as conn:
         return pd.read_sql(f"SELECT * FROM {table_name}", conn)
+
+
+def clear_all_data(table_name: str = "input_data"):
+    """Delete all rows from the working table (used by File > New).
+    Preserves the table schema and any other tables.
+    """
+    with get_db_connection() as conn:
+        conn.execute(f"DELETE FROM {table_name}")
+        conn.commit()

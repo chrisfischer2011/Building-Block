@@ -7,7 +7,7 @@ structured solution later if needed.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Callable, List, Optional
 
 from src.core.models import DataEntry
 
@@ -24,6 +24,15 @@ class AppState:
 
     # Whether the Inspector is in "Create New" mode
     is_creating: bool = False
+
+    # Callbacks registered by UI components (sidebar, inspector) so that
+    # "File > New" can trigger live refresh/rebuild of those panels.
+    _sidebar_refresh_callbacks: List[Callable[[], None]] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _inspector_refresh_callbacks: List[Callable[[], None]] = field(
+        default_factory=list, init=False, repr=False
+    )
 
     def select_item(self, item: DataEntry) -> None:
         """Select an item and exit create mode."""
@@ -46,3 +55,33 @@ class AppState:
     @property
     def has_selection(self) -> bool:
         return self.selected_item is not None
+
+    def clear(self) -> None:
+        """Full reset for File > New: clears selection/create mode and notifies
+        registered UI components (sidebar list + inspector) to refresh to empty state.
+        """
+        self.selected_item = None
+        self.is_creating = False
+
+        # Notify listeners (best-effort)
+        for cb in list(self._sidebar_refresh_callbacks):
+            try:
+                cb()
+            except Exception as ex:
+                print(f"[AppState] sidebar refresh callback error: {ex}")
+
+        for cb in list(self._inspector_refresh_callbacks):
+            try:
+                cb()
+            except Exception as ex:
+                print(f"[AppState] inspector refresh callback error: {ex}")
+
+    def register_sidebar_refresh(self, callback: Callable[[], None]) -> None:
+        """Register a function that can be called to force the left sidebar to reload/rebuild."""
+        if callback and callback not in self._sidebar_refresh_callbacks:
+            self._sidebar_refresh_callbacks.append(callback)
+
+    def register_inspector_refresh(self, callback: Callable[[], None]) -> None:
+        """Register a function that can be called to force the inspector panel to rebuild."""
+        if callback and callback not in self._inspector_refresh_callbacks:
+            self._inspector_refresh_callbacks.append(callback)

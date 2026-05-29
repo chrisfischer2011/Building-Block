@@ -233,6 +233,10 @@ def create_left_sidebar(
         page.update()
         print("=== REFRESH_LIST FINISHED ===")
 
+    # Register so that File > New (and future global resets) can trigger this
+    if hasattr(app_state, "register_sidebar_refresh"):
+        app_state.register_sidebar_refresh(refresh_list)
+
     _rebuild_item_list(
         items_column, 
         items, 

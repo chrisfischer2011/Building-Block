@@ -1,6 +1,7 @@
 import flet as ft
+from src.core.database import clear_all_data
 from src.ui.theme import HEADER_ELEVATION, HEADER_HEIGHT, HEADER_MENU_SPACING, HEADER_PADDING
-from src.utils.feedback import show_coming_soon
+from src.utils.feedback import show_coming_soon, show_success
 
 def create_menu_bar(page: ft.Page):
     """Creates the top application header bar.
@@ -13,11 +14,33 @@ def create_menu_bar(page: ft.Page):
     """
     
     def file_new(e): 
-        # Clear current working state (selection + create mode) for a "fresh" start
+        """File > New: completely clears all Rack/Amplifier data and resets UI panels."""
+        try:
+            # 1. Remove all working data from the database (fresh slate)
+            clear_all_data()
+        except Exception as ex:
+            print(f"[File > New] clear_all_data failed: {ex}")
+
+        # 2. Tell AppState to clear selection + fire all registered refresh callbacks
+        #    (sidebar will rebuild empty list, inspector will show "No item selected")
         if hasattr(page, "_app_state"):
-            page._app_state.selected_item = None
-            page._app_state.is_creating = False
-        page.update()
+            page._app_state.clear()
+        else:
+            # Fallback direct mutation (should not normally happen)
+            # This path won't refresh the visual lists because no callbacks registered
+            pass
+
+        # 3. Force a top-level update (callbacks usually do their own, this is belt-and-suspenders)
+        try:
+            page.update()
+        except Exception:
+            pass
+
+        # Optional user feedback (non-blocking)
+        try:
+            show_success(page, "New project started — all data cleared")
+        except Exception:
+            pass
 
     def file_save(e): 
         show_coming_soon(page, "Save")

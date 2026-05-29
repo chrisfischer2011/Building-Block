@@ -75,9 +75,31 @@ def create_main_layout(page: ft.Page, app_state: AppState) -> ft.Row:
         mouse_cursor=ft.MouseCursor.RESIZE_LEFT_RIGHT,
     )
 
+    # Inspector wrapped in a container so "File > New" can fully replace its
+    # content (rebuilding the empty state or selected state on demand).
+    inspector_wrapper = ft.Container(expand=True)
+
+    def _reset_inspector():
+        """Rebuild the inspector card from scratch using current app_state.
+        Safe to call from AppState.clear() even if not yet mounted.
+        """
+        try:
+            inspector_wrapper.content = create_inspector_panel(page, app_state)
+            inspector_wrapper.update()
+        except Exception:
+            # Not mounted yet or during early init — content will be set on first layout
+            inspector_wrapper.content = create_inspector_panel(page, app_state)
+
+    # Initial content
+    inspector_wrapper.content = create_inspector_panel(page, app_state)
+
+    # Allow AppState.clear() (triggered by File > New) to reset this panel
+    if hasattr(app_state, "register_inspector_refresh"):
+        app_state.register_inspector_refresh(_reset_inspector)
+
     right_panel = ft.Column(
         [
-            create_inspector_panel(page, app_state),
+            inspector_wrapper,
             create_main_content(page, app_state),
         ],
         spacing=PANEL_SPACING,
