@@ -39,21 +39,30 @@ class Device:
 
     def to_dict(self) -> dict:
         """Convert to dictionary suitable for database storage."""
+        import json
         return {
             "id": self.id,
             "name": self.name,
             "device_type": self.device_type,
             "parent_id": self.parent_id,
-            "properties": self.properties,   # Will be stored as JSON in DB later
+            "properties": json.dumps(self.properties) if self.properties else "{}",  # Store as JSON string
             "notes": self.notes,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Device":
         """Create a Device from a dictionary (from database or UI)."""
+        import json
+
+        def _clean(val, default=""):
+            if val is None:
+                return default
+            if isinstance(val, float) and str(val) == "nan":
+                return default
+            return val
+
         props = data.get("properties") or {}
         if isinstance(props, str):
-            import json
             try:
                 props = json.loads(props)
             except Exception:
@@ -61,11 +70,11 @@ class Device:
 
         return cls(
             id=data.get("id"),
-            name=data.get("name", ""),
-            device_type=data.get("device_type", ""),
+            name=_clean(data.get("name"), ""),
+            device_type=_clean(data.get("device_type"), ""),
             parent_id=data.get("parent_id"),
-            properties=props,
-            notes=data.get("notes", ""),
+            properties=props if isinstance(props, dict) else {},
+            notes=_clean(data.get("notes"), ""),
         )
 
     def __str__(self) -> str:
@@ -82,40 +91,90 @@ DataEntry = Device
 # =============================================================================
 
 RACK_FIELDS = [
+    # === Initial Form Fields (shown first when creating a Rack) ===
     "Rack Location",
     "Rack #",
+    "Template",
     "Rack Type",
+
+    # === Auto-fillable from Template ===
     "Switch Config",
     "Off Ramp",
     "AES Input",
     "Analog Input",
     "Distro 1",
     "Distro 2",
+    "Signal In",
+    "Signal Thru",
+    "Signal Out",
+    "Signal Out 2",
     "Maps 1",
     "Maps 2",
     "Maps 3",
     "Maps 4",
     "Maps 5",
     "Maps 6",
-    "Signal In",
-    "Signal Through",
-    "Signal Out 1",
-    "Signal Out 2",
+
+    # === Amp Assignment Fields (populated when amplifiers are assigned) ===
+    "Amp # 1",
+    "Amp # 2",
+    "Amp # 3",
+    "Amp # 4",
+    "Amp # 5",
+    "Amp # 6",
+    "Amp # 7",
+    "Amp # 8",
+    "Amp # 9",
+    "Amp # 10",
+    "Amp # 11",
+    "Amp # 12",
+    "Amp # 13",
+    "Amp # 14",
+    "Amp # 15",
+    "Amp # 16",
+
+    # === 1U Custom Fields ===
+    "1u A",
+    "1u B",
+]
+
+# Fields that should appear first / on the "Initial Form" when creating a Rack
+CORE_RACK_FIELDS = [
+    "Rack Location",
+    "Rack #",
+    "Template",
+    "Rack Type",
 ]
 
 AMPLIFIER_FIELDS = [
-    "Amp Location",      # Physical location / which rack the amp is in
-    "Amp Rack #",        # Which rack this amp belongs to (containment)
-    "Amp #",             # Physical slot/position inside the rack
-    "Amp ID",            # Global / Show-level identifier (different from Amp #)
-    "Amp Type",
+    # Assignment fields (used to link Amp to a specific Rack + slot)
+    "Rack Location",     # Filters available racks by location
+    "Rack #",            # Which rack this amp is assigned to
+    "Amp #",             # Physical slot in the rack (Amp # 1-16)
+
+    # Identification
+    "Amp ID",            # Global/Show-level ID (must be unique)
+    "Amp Type",          # D90, D80, D40
+
+    # Operating Mode (affects how channels and hangs behave)
+    "Mode",              # 2-Way Active, Dual Channel, Mix Top/Sub
+
+    # Channels
     "Ch A",
     "Ch B",
     "Ch C",
     "Ch D",
-    "Hang C",
+
+    # Hangs
     "Hang A",
+    "Hang B",
+    "Hang C",
+    "Hang D",
+
+    # Patching
     "Output Patch",
+
+    # Connectivity
     "ANA 1",
     "ANA 2",
     "ANA 3",
@@ -137,7 +196,8 @@ ALL_DEVICE_FIELDS = {
 DEVICE_FIELD_OPTIONS: dict[str, list[str]] = {
     # Rack fields
     "Rack Type": ["224", "223", "117", "112", "112(AIS)"],
-    "Switch Config": ["Pri Only", "Redundant"],
+    "Template": ["D90", "D80"],                    # New - drives many auto-fill values
+    "Switch Config": ["Primary Only", "Redundant"],
     "Off Ramp": ["", "None", "DS10", "DS20", "Other"],
     "AES Input": ["Off Ramp", "Signal In"],
     "Analog Input": ["Off Ramp", "Signal In"],
@@ -146,15 +206,25 @@ DEVICE_FIELD_OPTIONS: dict[str, list[str]] = {
         "6u POWERLOCK Distro",
         "AIS Box",
         "L21-30 Maps",
-        "32amp Cee Form Maps",
+        "32amp Cee-Form Maps",
     ],
     "Distro 2": [
         "6u CAMLOCK Distro",
         "6u POWERLOCK Distro",
         "AIS Box",
         "L21-30 Maps",
-        "32amp Cee Form Maps",
+        "32amp Cee-Form Maps",
     ],
+    "Signal In": ["NC14", "Ca-Com"],
+    "Signal Thru": ["NC14", "Ca-Com"],
+    "Signal Out": ["NC14", "Ca-Com"],
+    "Signal Out 2": ["NC14", "Ca-Com"],
+    "Maps 1": ["LK", "NL8", "NL4"],
+    "Maps 2": ["LK", "NL8", "NL4"],
+    "Maps 3": ["LK", "NL8", "NL4"],
+    "Maps 4": ["LK", "NL8", "NL4"],
+    "Maps 5": ["LK", "NL8", "NL4"],
+    "Maps 6": ["LK", "NL8", "NL4"],
     "Maps 1": [],
     "Maps 2": [],
     "Maps 3": [],
@@ -168,8 +238,24 @@ DEVICE_FIELD_OPTIONS: dict[str, list[str]] = {
 
     # Amplifier fields
     "Amp Type": ["D90", "D80", "D40"],
-    "Amp Location": ["Stage Right(SR)", "Stage Left(SL)", "Delay(DLY)"],
-    "Amp Rack #": [],          # This will be dynamically filtered based on Amp Location
+    "Rack Location": ["Stage Right(SR)", "Stage Left(SL)", "Delay(DLY)"],
+    "Rack #": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+    "Amp #": [
+        "Amp # 1", "Amp # 2", "Amp # 3", "Amp # 4",
+        "Amp # 5", "Amp # 6", "Amp # 7", "Amp # 8",
+        "Amp # 9", "Amp # 10", "Amp # 11", "Amp # 12",
+        "Amp # 13", "Amp # 14", "Amp # 15", "Amp # 16",
+    ],
+    "Mode": ["2-Way Active", "Dual Channel", "Mix Top/Sub"],
+    "Output Patch": ["LK", "NL8", "NL4"],
+    "Rack Location": ["Stage Right(SR)", "Stage Left(SL)", "Delay(DLY)"],
+    "Rack #": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+    "Amp #": [
+        "Amp # 1", "Amp # 2", "Amp # 3", "Amp # 4",
+        "Amp # 5", "Amp # 6", "Amp # 7", "Amp # 8",
+        "Amp # 9", "Amp # 10", "Amp # 11", "Amp # 12",
+        "Amp # 13", "Amp # 14", "Amp # 15", "Amp # 16",
+    ],
 
     # Common / shared fields
     "Ch A": [],
@@ -200,3 +286,141 @@ def get_fields_for_device(device: Device | str) -> list[str]:
 def get_options_for_field(field_name: str) -> list[str]:
     """Returns the dropdown options for a specific field (if any are defined)."""
     return DEVICE_FIELD_OPTIONS.get(field_name, [])
+
+
+# =============================================================================
+# Rack Template Defaults
+# Key = (Template, Rack Type)
+# Value = dict of field -> default value
+# =============================================================================
+
+RACK_TEMPLATE_DEFAULTS = {
+    # D90 Templates
+    ("D90", "224"): {
+        "Rack Type": "224",
+        "Switch Config": "Redundant",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "6u CAMLOCK Distro",
+        "Signal In": "NC14",
+        "Signal Thru": "NC14",
+        "Signal Out": "Ca-Com",
+        "Maps 1": "LK",
+        "Maps 2": "LK",
+        "Maps 3": "LK",
+        "Maps 4": "LK",
+    },
+    ("D90", "223"): {
+        "Rack Type": "223",
+        "Switch Config": "Redundant",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "6u CAMLOCK Distro",
+        "Signal In": "NC14",
+        "Signal Thru": "NC14",
+        "Signal Out": "Ca-Com",
+        "Maps 1": "LK",
+        "Maps 2": "LK",
+        "Maps 3": "LK",
+        "Maps 4": "LK",
+    },
+    ("D90", "117"): {
+        "Rack Type": "117",
+        "Switch Config": "Redundant",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "L21-30 Maps",
+        "Distro 2": "L21-30 Maps",
+        "Signal In": "Ca-Com",
+        "Signal Thru": "Ca-Com",
+        "Maps 1": "LK",
+        "Maps 2": "LK",
+    },
+    ("D90", "112"): {
+        "Rack Type": "112",
+        "Switch Config": "Redundant",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "L21-30 Maps",
+        "Signal In": "Ca-Com",
+        "Signal Thru": "Ca-Com",
+        "Maps 1": "LK",
+    },
+    ("D90", "112(AIS)"): {
+        "Rack Type": "112(AIS)",
+        "Switch Config": "Redundant",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "AIS Box",
+        "Signal In": "Ca-Com",
+        "Signal Thru": "Ca-Com",
+    },
+
+    # D80 Templates
+    ("D80", "224"): {
+        "Rack Type": "224",
+        "Switch Config": "Primary Only",
+        "Off Ramp": "DS10",
+        "AES Input": "Off Ramp",
+        "Analog Input": "Signal In",
+        "Distro 1": "6u CAMLOCK Distro",
+        "Signal In": "NC14",
+        "Signal Thru": "NC14",
+        "Signal Out": "Ca-Com",
+        "Maps 1": "LK",
+        "Maps 2": "LK",
+        "Maps 3": "LK",
+        "Maps 4": "LK",
+    },
+    ("D80", "223"): {
+        "Rack Type": "223",
+        "Switch Config": "Primary Only",
+        "Off Ramp": "DS10",
+        "AES Input": "Off Ramp",
+        "Analog Input": "Signal In",
+        "Distro 1": "6u CAMLOCK Distro",
+        "Signal In": "NC14",
+        "Signal Thru": "NC14",
+        "Signal Out": "Ca-Com",
+        "Maps 1": "LK",
+        "Maps 2": "LK",
+        "Maps 3": "LK",
+        "Maps 4": "LK",
+    },
+    ("D80", "117"): {
+        "Rack Type": "117",
+        "Switch Config": "Primary Only",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "L21-30 Maps",
+        "Distro 2": "L21-30 Maps",
+        "Signal In": "Ca-Com",
+        "Signal Thru": "Ca-Com",
+        "Maps 1": "LK",
+        "Maps 2": "LK",
+    },
+    ("D80", "112"): {
+        "Rack Type": "112",
+        "Switch Config": "Primary Only",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "L21-30 Maps",
+        "Signal In": "Ca-Com",
+        "Signal Thru": "Ca-Com",
+        "Maps 1": "LK",
+    },
+    ("D80", "112(AIS)"): {
+        "Rack Type": "112(AIS)",
+        "Switch Config": "Primary Only",
+        "AES Input": "Signal In",
+        "Analog Input": "Signal In",
+        "Distro 1": "AIS Box",
+        "Signal In": "Ca-Com",
+        "Signal Thru": "Ca-Com",
+    },
+}
+
+
+def get_rack_template_defaults(template: str, rack_type: str) -> dict:
+    """Returns the default values for a given Template + Rack Type combination."""
+    return RACK_TEMPLATE_DEFAULTS.get((template, rack_type), {}).copy()

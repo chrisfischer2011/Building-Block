@@ -13,7 +13,11 @@ def create_menu_bar(page: ft.Page):
     """
     
     def file_new(e): 
-        show_coming_soon(page, "New File")
+        # Clear current working state (selection + create mode) for a "fresh" start
+        if hasattr(page, "_app_state"):
+            page._app_state.selected_item = None
+            page._app_state.is_creating = False
+        page.update()
 
     def file_save(e): 
         show_coming_soon(page, "Save")

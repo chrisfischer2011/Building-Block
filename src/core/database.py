@@ -10,7 +10,7 @@ def get_db_connection():
     return sqlite3.connect(DB_PATH)
 
 def init_database():
-    """Initialize tables"""
+    """Initialize tables and ensure schema is up to date for the new Device model."""
     with get_db_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS input_data (
@@ -21,6 +21,26 @@ def init_database():
                 notes TEXT
             )
         """)
+
+        # Upgrade schema for new Device model (Phase 6)
+        # Add missing columns if they don't exist
+        existing_columns = [row[1] for row in conn.execute("PRAGMA table_info(input_data)").fetchall()]
+        
+        new_columns = {
+            "name": "TEXT",
+            "device_type": "TEXT",
+            "parent_id": "INTEGER",
+            "properties": "TEXT"   # Stored as JSON string
+        }
+
+        for col_name, col_type in new_columns.items():
+            if col_name not in existing_columns:
+                try:
+                    conn.execute(f"ALTER TABLE input_data ADD COLUMN {col_name} {col_type}")
+                    print(f"✅ Added column '{col_name}' to input_data table.")
+                except Exception as e:
+                    print(f"Warning: Could not add column {col_name}: {e}")
+
         print("✅ Database initialized successfully.")
         
         # Optional: Create a sample reference table

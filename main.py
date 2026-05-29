@@ -22,12 +22,17 @@ def main(page: ft.Page):
     init_database()
 
     # Final Page Layout
+    current_app_state = AppState()
+
+    # Make AppState available to menu handlers for "New", etc. during refining
+    page._app_state = current_app_state
+
     page.add(
         ft.Column(
             [
                 create_menu_bar(page),
                 ft.Container(
-                    content=create_main_layout(page, AppState()),
+                    content=create_main_layout(page, current_app_state),
                     padding=CONTENT_PADDING,
                     expand=True
                 ),
