@@ -30,7 +30,6 @@ def create_main_layout(page: ft.Page, app_state: AppState) -> ft.Row:
     def _rebuild_inspector():
         """Rebuild the inspector card from scratch using current app_state.
         Used for both normal selection changes and File > New.
-        Defensive version to avoid crashing click handlers on color/theme issues.
         """
         try:
             new_content = create_inspector_panel(page, app_state)

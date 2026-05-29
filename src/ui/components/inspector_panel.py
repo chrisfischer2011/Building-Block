@@ -33,11 +33,7 @@ from src.utils.feedback import show_coming_soon
 # Exactly as requested by the user for the 3-row compact grid
 # =============================================================================
 
-# Amp assignment slots (shown after the signal grid)
-RACK_AMP_SLOTS = [f"Amp # {i}" for i in range(1, 17)]
 
-# 1U custom fields
-RACK_1U_FIELDS = ["1u A", "1u B"]
 
 
 # =============================================================================
@@ -62,54 +58,51 @@ RACK_TAB_1U = ["1u A", "1u B"]
 def _attribute_tile(field_name: str, value: Any, color_scheme) -> ft.Container:
     """Compact visual tile for a single Rack attribute.
 
-    Uses only color attributes that are known to exist reliably in Flet 0.85.x.
+    TEMP DEBUG VERSION: Large text, fixed width, no expand to avoid layout collapse in tabs.
     """
     display_value = str(value) if value not in (None, "", "nan") else "—"
 
-    # Safe color choices that work in their current Flet version
-    label_color = getattr(color_scheme, "on_primary_container", None) or color_scheme.on_secondary_container
-    value_color = getattr(color_scheme, "on_surface", None) or color_scheme.on_primary_container
-    bg_color = getattr(color_scheme, "primary_container", None) or ft.Colors.GREY_100
-    border_color = getattr(color_scheme, "outline", None) or ft.Colors.GREY_400
+    label_color = ft.Colors.BLACK
+    value_color = ft.Colors.DARK_BLUE
 
     return ft.Container(
         content=ft.Column(
             [
                 ft.Text(
                     field_name,
-                    size=9,
-                    weight=ft.FontWeight.W_600,
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
                     color=label_color,
                     text_align=ft.TextAlign.CENTER,
                 ),
                 ft.Text(
                     display_value,
-                    size=11,
-                    weight=ft.FontWeight.W_500,
+                    size=14,
+                    weight=ft.FontWeight.BOLD,
                     color=value_color,
                     text_align=ft.TextAlign.CENTER,
                 ),
             ],
-            spacing=1,
+            spacing=2,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             tight=True,
         ),
-        padding=ft.Padding.symmetric(horizontal=6, vertical=4),
+        width=110,                    # Fixed width instead of expand
+        padding=ft.Padding.symmetric(horizontal=6, vertical=5),
         border=ft.Border(
-            left=ft.BorderSide(width=1, color=border_color),
-            top=ft.BorderSide(width=1, color=border_color),
-            right=ft.BorderSide(width=1, color=border_color),
-            bottom=ft.BorderSide(width=1, color=border_color),
+            left=ft.BorderSide(width=2, color=ft.Colors.BLACK),
+            top=ft.BorderSide(width=2, color=ft.Colors.BLACK),
+            right=ft.BorderSide(width=2, color=ft.Colors.BLACK),
+            bottom=ft.BorderSide(width=2, color=ft.Colors.BLACK),
         ),
-        border_radius=4,
-        bgcolor=bg_color,
-        expand=True,
+        border_radius=6,
+        bgcolor=ft.Colors.YELLOW_100,
         alignment=ft.Alignment.CENTER,
     )
 
 
 def _build_tab_content(field_names: list[str], props: dict, color_scheme) -> ft.Container:
-    """Builds a scrollable, wrapped grid of attribute tiles for a tab section."""
+    """Builds scrollable tab content using compact tiles for the Rack inspector."""
     if not field_names:
         return ft.Container(
             content=ft.Text("No fields in this section.", italic=True, size=11),
@@ -117,14 +110,22 @@ def _build_tab_content(field_names: list[str], props: dict, color_scheme) -> ft.
         )
 
     tiles = [_attribute_tile(name, props.get(name, ""), color_scheme) for name in field_names]
+    print(f"[INSPECTOR DEBUG]   Created {len(tiles)} tiles for section")
 
+    # Wrap the tiles row in a scrollable Column for better behavior inside Tabs
     return ft.Container(
-        content=ft.Row(
-            tiles,
-            spacing=3,
-            wrap=True,
-            alignment=ft.MainAxisAlignment.START,
-            vertical_alignment=ft.CrossAxisAlignment.START,
+        content=ft.Column(
+            [
+                ft.Row(
+                    tiles,
+                    spacing=3,
+                    wrap=True,
+                    alignment=ft.MainAxisAlignment.START,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                )
+            ],
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
         ),
         padding=ft.Padding.only(top=6, bottom=8, left=2, right=2),
         expand=True,
@@ -280,72 +281,180 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
         icon = ft.Icons.SETTINGS if device_type.lower() == "rack" else ft.Icons.SPEAKER
 
         # Assemble the inspector body
-        inspector_body_children = [
-            # Always show Inspector header + type/name
-            ft.Text(
-                "Inspector",
-                size=15,
-                weight=ft.FontWeight.BOLD,
-                color=color_scheme.on_secondary_container,
-            ),
-            ft.Row(
-                [
-                    ft.Icon(icon, size=18, color=color_scheme.on_secondary_container),
-                    ft.Text(
-                        f"{device_type}: {display_name}",
-                        weight=ft.FontWeight.W_500,
-                        color=color_scheme.on_secondary_container,
-                        expand=True,
-                    ),
-                ],
-                spacing=6,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-        ]
+        # Compact header: "Inspector" + selected item info on the same row
+        header_row = ft.Row(
+            [
+                ft.Text(
+                    "Inspector",
+                    size=15,
+                    weight=ft.FontWeight.BOLD,
+                    color=color_scheme.on_secondary_container,
+                ),
+                ft.Container(width=12),  # small spacer
+                ft.Icon(icon, size=16, color=color_scheme.on_secondary_container),
+                ft.Text(
+                    f"{device_type}: {display_name}",
+                    weight=ft.FontWeight.W_500,
+                    color=color_scheme.on_secondary_container,
+                ),
+            ],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        inspector_body_children = [header_row]
 
         if device_type.lower() == "rack":
-            # ============================================================
-            # TABBED RACK INSPECTOR - All fields accessible via tabs
-            # ============================================================
+            # === New compact header with tabs integrated + underlined ===
+            # Tabs: Core | Signal Routing | Amp Assignments (1U merged in)
 
-            # Build tab contents using compact tiles
             core_content = _build_tab_content(RACK_TAB_CORE, props, color_scheme)
             signal_content = _build_tab_content(RACK_TAB_SIGNAL, props, color_scheme)
+
+            # Combine Amp Assignments + 1U Custom into one tab
             amps_content = _build_tab_content(RACK_TAB_AMPS, props, color_scheme)
             oneu_content = _build_tab_content(RACK_TAB_1U, props, color_scheme)
 
-            tabs = ft.Tabs(
-                selected_index=0,
-                tabs=[
-                    ft.Tab(
-                        text="Core",
-                        content=core_content,
-                    ),
-                    ft.Tab(
-                        text="Signal Routing",
-                        content=signal_content,
-                    ),
-                    ft.Tab(
-                        text="Amp Assignments",
-                        content=amps_content,
-                    ),
-                    ft.Tab(
-                        text="1U Custom",
-                        content=oneu_content,
-                    ),
-                ],
+            print(f"[INSPECTOR DEBUG] Building tab contents for {display_name}")
+            # Better counting: look inside the debug wrappers
+            def count_tiles(c):
+                if not c: return 0
+                inner = getattr(c, 'content', c)
+                if hasattr(inner, 'controls'):
+                    for child in inner.controls:
+                        if hasattr(child, 'controls'):
+                            return len(child.controls)
+                return 0
+            print(f"  Core tiles:     {count_tiles(core_content)}")
+            print(f"  Signal tiles:   {count_tiles(signal_content)}")
+            print(f"  Amp tiles:      {count_tiles(amps_content)}")
+            print(f"  1U tiles:       {count_tiles(oneu_content)}")
+
+            # TEMP: Give each tab content a different light background so we can see them clearly
+            core_debug = ft.Container(
+                content=core_content,
+                bgcolor=ft.Colors.GREEN_50,
+                padding=4,
                 expand=True,
-                divider_color=color_scheme.outline,
+            )
+            signal_debug = ft.Container(
+                content=signal_content,
+                bgcolor=ft.Colors.ORANGE_50,
+                padding=4,
+                expand=True,
+            )
+            amp_plus_1u_content = ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text("Amp Assignments", size=10, weight=ft.FontWeight.W_600,
+                                color=color_scheme.on_secondary_container),
+                        amps_content,
+                        ft.Text("1U Custom", size=10, weight=ft.FontWeight.W_600,
+                                color=color_scheme.on_secondary_container),
+                        oneu_content,
+                    ],
+                    spacing=6,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                bgcolor=ft.Colors.PURPLE_50,
+                padding=4,
+                expand=True,
             )
 
-            # Wrap tabs so it can scroll and size correctly inside the inspector
-            inspector_body_children.append(
-                ft.Container(
-                    content=tabs,
-                    expand=True,
-                    padding=ft.Padding.only(top=4),
-                )
+            tab_contents = [core_debug, signal_debug, amp_plus_1u_content]
+            tab_labels = ["Core", "Signal Routing", "Amp Assignments"]
+            selected_tab = [0]   # mutable index for live switching
+
+            # Content area must be created BEFORE the buttons (closure safety)
+            # TEMP DEBUG WRAPPER - bright background + border so we can see the real content bounds
+            content_area = ft.Container(
+                content=tab_contents[selected_tab[0]],
+                expand=True,
+                padding=ft.Padding.only(top=4, bottom=4),
+                bgcolor=ft.Colors.LIGHT_BLUE_100,
+                border=ft.Border(
+                    left=ft.BorderSide(width=3, color=ft.Colors.BLUE),
+                    right=ft.BorderSide(width=3, color=ft.Colors.BLUE),
+                    top=ft.BorderSide(width=3, color=ft.Colors.BLUE),
+                    bottom=ft.BorderSide(width=3, color=ft.Colors.BLUE),
+                ),
             )
+
+            # We need a container for the header so we can rebuild it when tabs change
+            header_container = ft.Container()
+
+            def rebuild_header():
+                """Rebuilds the header row with correct tab button states."""
+                tab_buttons = []
+                for i, label in enumerate(tab_labels):
+                    is_selected = (i == selected_tab[0])
+
+                    def make_switcher(idx):
+                        def _switch(e):
+                            selected_tab[0] = idx
+                            content_area.content = tab_contents[selected_tab[0]]
+                            rebuild_header()           # refresh tab highlights
+                            try:
+                                header_container.update()
+                                content_area.update()
+                            except Exception:
+                                pass
+                        return _switch
+
+                    btn = ft.Container(
+                        content=ft.Text(
+                            label,
+                            size=13,
+                            weight=ft.FontWeight.BOLD if is_selected else ft.FontWeight.W_600,
+                            color=color_scheme.on_primary_container if is_selected else color_scheme.on_secondary_container,
+                        ),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=4),
+                        bgcolor=color_scheme.primary_container if is_selected else ft.Colors.TRANSPARENT,
+                        border_radius=4,
+                        on_click=make_switcher(i),
+                        tooltip=f"Show {label}",
+                    )
+                    tab_buttons.append(btn)
+
+                compact_header = ft.Row(
+                    [
+                        ft.Text(
+                            "Inspector",
+                            size=15,
+                            weight=ft.FontWeight.BOLD,
+                            color=color_scheme.on_secondary_container,
+                        ),
+                        ft.Container(width=8),
+                        ft.Icon(icon, size=15, color=color_scheme.on_secondary_container),
+                        ft.Text(
+                            f"{device_type}: {display_name}",
+                            weight=ft.FontWeight.W_500,
+                            color=color_scheme.on_secondary_container,
+                        ),
+                        ft.Container(expand=True),
+                        *tab_buttons,
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+
+                header_container.content = compact_header
+
+            # Initial header build
+            rebuild_header()
+
+            # Underline for the entire header row
+            header_underline = ft.Container(
+                height=1,
+                bgcolor=color_scheme.outline,
+                margin=ft.Padding.only(bottom=6),
+            )
+
+            inspector_body_children = [
+                header_container,
+                header_underline,
+                content_area,
+            ]
 
         else:
             # ============================================================
@@ -374,28 +483,17 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                 )
             )
 
-        # Notes is always last for every device type
-        inspector_body_children.append(
-            ft.TextField(
-                label="Notes",
-                value=notes,
-                height=60,
-                text_size=11,
-                multiline=True,
-                read_only=True,
-                dense=True,
-            )
-        )
-
         inspector_body = ft.Column(
             inspector_body_children,
             spacing=FORM_SPACING,
             expand=True,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,   # Critical: makes children fill full width
         )
 
         content = ft.Container(
             content=inspector_body,
             padding=CARD_CONTENT_PADDING,
+            expand=True,   # Help the content fill the Card width
         )
 
     return ft.Card(

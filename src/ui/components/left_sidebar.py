@@ -160,17 +160,33 @@ def create_left_sidebar(
     """
     color_scheme = page.theme.color_scheme
 
-    # Load real data from database
-    try:
-        df = load_from_db("input_data")
-        items: list[DataEntry] = [
-            DataEntry.from_dict(row) for _, row in df.iterrows()
-            if row  # skip completely empty rows
-        ]
-        # Filter out items that are missing critical info after migration
-        items = [item for item in items if item and item.device_type]
-    except Exception:
-        items = []
+    # Load real data from database (fresh load on every sidebar creation / startup)
+    def _load_items_from_db() -> list[DataEntry]:
+        try:
+            df = load_from_db("input_data")
+            raw_count = len(df)
+            print(f"[SIDEBAR] load_from_db returned {raw_count} raw rows")
+
+            loaded = []
+            for _, row in df.iterrows():
+                # Do NOT do "if row:" or "if not row:" here — row is a pandas Series
+                # and that causes "truth value of a Series is ambiguous".
+                try:
+                    item = DataEntry.from_dict(row)
+                    loaded.append(item)
+                except Exception as conv_err:
+                    print(f"[SIDEBAR]   Skipped row during from_dict: {conv_err}")
+
+            filtered = [item for item in loaded if item and getattr(item, 'device_type', None)]
+            print(f"[SIDEBAR] After conversion & filter: {len(filtered)} items (from {raw_count} raw)")
+            for it in filtered[:5]:  # show first few for debugging
+                print(f"    - {it.name} | type: {it.device_type}")
+            if len(filtered) > 5:
+                print(f"    ... and {len(filtered)-5} more")
+            return filtered
+        except Exception as ex:
+            print(f"[SIDEBAR] ERROR loading items from DB: {ex}")
+            return []
 
     # Placeholder seeding has been disabled per user request.
     # If you want sample data again, we can re-enable it later.
@@ -194,7 +210,7 @@ def create_left_sidebar(
 
     def refresh_list():
         """Reload data from DB and refresh the sidebar list + auto-select latest."""
-        print("=== REFRESH_LIST CALLED ===")
+        print("[SIDEBAR] === REFRESH_LIST CALLED (e.g. after create or New) ===")
         try:
             fdf = load_from_db("input_data")
             print("Loaded rows from DB:", len(fdf))
@@ -237,14 +253,20 @@ def create_left_sidebar(
     if hasattr(app_state, "register_sidebar_refresh"):
         app_state.register_sidebar_refresh(refresh_list)
 
+    # Initial population — always do a fresh DB load + rebuild on startup.
+    # This is what makes all existing Racks appear immediately when you open the app.
+    print("[SIDEBAR] Performing initial load for sidebar on startup...")
+    fresh_items = _load_items_from_db()
+    print(f"[SIDEBAR] Passing {len(fresh_items)} items to initial _rebuild_item_list")
     _rebuild_item_list(
         items_column, 
-        items, 
+        fresh_items, 
         page, 
         app_state, 
         on_selection_changed,
         text_color=color_scheme.on_primary_container,
     )
+    print("[SIDEBAR] Initial sidebar build complete")
 
     content = ft.Container(
         content=ft.Column(
@@ -300,7 +322,7 @@ def _rebuild_item_list(
     """Rebuild the list of selectable items. 
     Does NOT call .update() — caller is responsible after the control is mounted.
     """
-    print(f"_rebuild_item_list called with {len(items)} items")
+    print(f"[SIDEBAR] _rebuild_item_list called with {len(items)} items")
     column.controls.clear()
 
     for item in items:
