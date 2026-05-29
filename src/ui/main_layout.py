@@ -22,12 +22,59 @@ def create_main_layout(page: ft.Page, app_state: AppState) -> ft.Row:
     """
     color_scheme = page.theme.color_scheme
 
+    # --- Inspector wrapper (supports both "New" reset and normal item selection) ---
+    # We keep the inspector inside a Container so we can completely replace its
+    # content when the selection changes or when the user does File > New.
+    inspector_wrapper = ft.Container(expand=True)
+
+    def _rebuild_inspector():
+        """Rebuild the inspector card from scratch using current app_state.
+        Used for both normal selection changes and File > New.
+        Defensive version to avoid crashing click handlers on color/theme issues.
+        """
+        try:
+            new_content = create_inspector_panel(page, app_state)
+            inspector_wrapper.content = new_content
+            inspector_wrapper.update()
+        except Exception as ex:
+            # Log but do not let the exception bubble up and break the UI click
+            print(f"[Inspector] Failed to rebuild inspector: {ex}")
+            try:
+                inspector_wrapper.update()
+            except Exception:
+                pass
+
+    # Initial content
+    inspector_wrapper.content = create_inspector_panel(page, app_state)
+
+    # Allow AppState.clear() (triggered by File > New) to reset this panel
+    if hasattr(app_state, "register_inspector_refresh"):
+        app_state.register_inspector_refresh(_rebuild_inspector)
+
+    # --- Selection change handler (wired to left sidebar) ---
+    # When the user clicks an item, this forces the inspector (and any other
+    # dependent panels) to rebuild with the newly selected data.
+    def on_selection_changed(item):
+        # The sidebar click handler already called app_state.select_item(item),
+        # but we ensure it here for safety / future callers.
+        if item is not None:
+            app_state.select_item(item)
+
+        # Rebuild the inspector to reflect the current selection (or empty state)
+        _rebuild_inspector()
+
+        # Belt-and-suspenders top-level refresh
+        try:
+            page.update()
+        except Exception:
+            pass
+
     # Use AppState as the single source of truth for sidebar width
     left_container = ft.Container(
         content=create_left_sidebar(
             page,
             app_state,
-            on_selection_changed=lambda item: page.update(),
+            on_selection_changed=on_selection_changed,
         ),
         width=app_state.sidebar_width,
     )
@@ -75,28 +122,9 @@ def create_main_layout(page: ft.Page, app_state: AppState) -> ft.Row:
         mouse_cursor=ft.MouseCursor.RESIZE_LEFT_RIGHT,
     )
 
-    # Inspector wrapped in a container so "File > New" can fully replace its
-    # content (rebuilding the empty state or selected state on demand).
-    inspector_wrapper = ft.Container(expand=True)
-
-    def _reset_inspector():
-        """Rebuild the inspector card from scratch using current app_state.
-        Safe to call from AppState.clear() even if not yet mounted.
-        """
-        try:
-            inspector_wrapper.content = create_inspector_panel(page, app_state)
-            inspector_wrapper.update()
-        except Exception:
-            # Not mounted yet or during early init — content will be set on first layout
-            inspector_wrapper.content = create_inspector_panel(page, app_state)
-
-    # Initial content
-    inspector_wrapper.content = create_inspector_panel(page, app_state)
-
-    # Allow AppState.clear() (triggered by File > New) to reset this panel
-    if hasattr(app_state, "register_inspector_refresh"):
-        app_state.register_inspector_refresh(_reset_inspector)
-
+    # The inspector_wrapper (and its _rebuild_inspector function) were already
+    # created earlier so that both File > New and normal selection changes can
+    # refresh it. We simply reference the existing wrapper here.
     right_panel = ft.Column(
         [
             inspector_wrapper,
