@@ -234,6 +234,48 @@ def create_left_sidebar(
         except Exception:
             return []
 
+    # Master list of all items loaded from DB (used as source for filtering)
+    all_items: list[DataEntry] = []
+
+    def _get_visible_items() -> list[DataEntry]:
+        """Return items filtered by the current search text (case-insensitive).
+        Matches against name, device_type, and all property key/values.
+        """
+        query = (search_field.value or "").strip().lower()
+        if not query:
+            return list(all_items)
+        visible = []
+        for item in all_items:
+            if not item:
+                continue
+            haystack_parts = [
+                (item.name or ""),
+                (item.device_type or ""),
+            ]
+            if getattr(item, "properties", None):
+                for k, v in item.properties.items():
+                    haystack_parts.append(str(k))
+                    haystack_parts.append(str(v))
+            haystack = " ".join(haystack_parts).lower()
+            if query in haystack:
+                visible.append(item)
+        return visible
+
+    def _filter_list(e, column: ft.Column, app_state):
+        """Live filter the sidebar list based on search text.
+        Rebuilds only the visible items without changing selection or master data.
+        """
+        visible = _get_visible_items()
+        _rebuild_item_list(
+            column,
+            visible,
+            page,
+            app_state,
+            on_selection_changed,
+            text_color=color_scheme.on_primary_container,
+        )
+        column.update()
+
     # Placeholder seeding has been disabled per user request.
     # If you want sample data again, we can re-enable it later.
     # if not items:
@@ -258,7 +300,18 @@ def create_left_sidebar(
         """Reload data from DB and refresh the sidebar list.
         auto_select_latest: only auto-select the newest item on create (True),
         pass False from edit saves to avoid deselecting current item.
+
+        On auto-select paths (create + File > New global clear), we clear any active
+        search text so the newly created item (or the empty state) is visible.
         """
+        # On create / global reset paths, clear the search so the result is visible to the user.
+        if auto_select_latest and search_field.value:
+            search_field.value = ""
+            try:
+                search_field.update()
+            except Exception:
+                pass
+
         try:
             fdf = load_from_db("input_data")
             fresh = []
@@ -272,9 +325,15 @@ def create_left_sidebar(
         except Exception:
             fresh = []
 
+        # Update the master list used by search filtering
+        all_items.clear()
+        all_items.extend(fresh)
+
+        # Apply current filter (usually empty after the clear above, or preserved for edit-refresh=False)
+        visible = _get_visible_items()
         _rebuild_item_list(
             items_column,
-            fresh,
+            visible,
             page,
             app_state,
             on_selection_changed,
@@ -296,6 +355,8 @@ def create_left_sidebar(
     # Initial population — always do a fresh DB load + rebuild on startup.
     # This ensures all existing Racks/Amps from the DB appear immediately when the app opens.
     fresh_items = _load_items_from_db()
+    all_items.clear()
+    all_items.extend(fresh_items)
     _rebuild_item_list(
         items_column, 
         fresh_items, 
@@ -359,7 +420,6 @@ def _rebuild_item_list(
     """Rebuild the list of selectable items. 
     Does NOT call .update() — caller is responsible after the control is mounted.
     """
-    print(f"_rebuild_item_list called with {len(items)} items")
     column.controls.clear()
 
     for item in items:
@@ -399,18 +459,36 @@ def _rebuild_item_list(
 
 
 def _on_item_clicked(item, page: ft.Page, app_state, column: ft.Column, callback, text_color=None):
-    """Handle clicking an item in the list."""
+    """Handle clicking an item in the list.
+    Keeps any active search filter (rebuilds only visible items under the filter).
+    """
     app_state.select_item(item)
 
-    # Reload data from DB so the list stays in sync
+    # Reload data from DB so the list stays in sync, then re-apply current filter
     try:
         df = load_from_db("input_data")
-        current_items = [DataEntry.from_dict(row) for _, row in df.iterrows()]
+        fresh = []
+        for _, row in df.iterrows():
+            try:
+                it = DataEntry.from_dict(row)
+                if it is not None and getattr(it, 'device_type', None):
+                    fresh.append(it)
+            except Exception:
+                pass
+        all_items.clear()
+        all_items.extend(fresh)
     except Exception:
-        current_items = _get_seed_data()
+        # keep previous all_items on error; fall back to seed only if completely empty
+        if not all_items:
+            try:
+                fresh = _get_seed_data()
+                all_items.clear()
+                all_items.extend(fresh)
+            except Exception:
+                pass
 
-    # Rebuild the list so the visual selection updates
-    _rebuild_item_list(column, current_items, page, app_state, callback, text_color=text_color)
+    visible = _get_visible_items()
+    _rebuild_item_list(column, visible, page, app_state, callback, text_color=text_color)
 
     # Now safe to update because the column is already mounted on the page
     column.update()
@@ -419,6 +497,5 @@ def _on_item_clicked(item, page: ft.Page, app_state, column: ft.Column, callback
         callback(item)
 
 
-def _filter_list(e, column: ft.Column, app_state):
-    """Basic filtering placeholder for Phase 5."""
-    pass
+# _filter_list is now defined locally inside create_left_sidebar (with real implementation + closure over search_field/all_items).
+# The previous placeholder has been replaced.
