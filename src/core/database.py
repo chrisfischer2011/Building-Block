@@ -64,6 +64,28 @@ def load_from_db(table_name: str = "input_data") -> pd.DataFrame:
         return pd.read_sql(f"SELECT * FROM {table_name}", conn)
 
 
+def overwrite_data(items: list, table_name: str = "input_data"):
+    """Replace the entire table contents with the provided list of items.
+    Each item should be a DataEntry (with to_dict) or a dict ready for to_sql.
+    This is used to persist edits to existing records.
+    """
+    if not items:
+        with get_db_connection() as conn:
+            conn.execute(f"DELETE FROM {table_name}")
+            conn.commit()
+        return
+
+    if hasattr(items[0], "to_dict"):
+        rows = [it.to_dict() for it in items]
+    else:
+        rows = items
+
+    df = pd.DataFrame(rows)
+    with get_db_connection() as conn:
+        df.to_sql(table_name, conn, if_exists="replace", index=False)
+        conn.commit()
+
+
 def clear_all_data(table_name: str = "input_data"):
     """Delete all rows from the working table (used by File > New).
     Preserves the table schema and any other tables.

@@ -12,9 +12,7 @@ import pandas as pd
 
 from src.core.database import load_from_db, save_to_db
 from src.core.models import (
-    CORE_RACK_FIELDS,
     DataEntry,
-    get_fields_for_device,
     get_options_for_field,
     get_rack_template_defaults,
 )
@@ -66,6 +64,50 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
     template_ref = ft.Ref[ft.Dropdown]()
     rack_type_ref = ft.Ref[ft.Dropdown]()
 
+    # Refs for auto-fillable template fields (shown for Rack)
+    auto_fill_field_refs = {}
+    auto_fill_fields = [
+        "Switch Config", "Off Ramp", "AES Input", "Analog Input",
+        "Distro 1", "Distro 2",
+        "Signal In", "Signal Thru", "Signal Out", "Signal Out 2",
+        "Maps 1", "Maps 2", "Maps 3", "Maps 4", "Maps 5", "Maps 6",
+    ]
+    for f in auto_fill_fields:
+        auto_fill_field_refs[f] = ft.Ref[ft.Dropdown]()
+
+    def _auto_fill_from_template(e=None):
+        """Auto-fill the template-derived fields when Template + Rack Type are set.
+        If device type is not Rack, clear the auto fields.
+        Uses safe access because refs may not be populated until dialog is shown.
+        """
+        dtype_ctrl = device_type_ref.current
+        dtype = getattr(dtype_ctrl, 'value', None) if dtype_ctrl else None
+        if dtype != "Rack":
+            for f in auto_fill_fields:
+                ref = auto_fill_field_refs.get(f)
+                if ref and ref.current:
+                    try:
+                        ref.current.value = ""
+                        ref.current.update()
+                    except Exception:
+                        pass
+            return
+        t_ctrl = template_ref.current
+        rt_ctrl = rack_type_ref.current
+        t = getattr(t_ctrl, 'value', None) if t_ctrl else None
+        rt = getattr(rt_ctrl, 'value', None) if rt_ctrl else None
+        if not t or not rt:
+            return
+        defaults = get_rack_template_defaults(t, rt)
+        for f, v in defaults.items():
+            ref = auto_fill_field_refs.get(f)
+            if ref and ref.current:
+                try:
+                    ref.current.value = v or ""
+                    ref.current.update()
+                except Exception:
+                    pass
+
     def _save(e):
         print("=== CREATE SAVE STARTED ===")
         try:
@@ -81,13 +123,17 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             else:
                 name = "New Amplifier"
 
-            # Collect the 4 core fields into properties for now
+            # Collect core + auto-fill fields (only meaningful for Rack)
             props = {
                 "Rack Location": location_ref.current.value or "",
                 "Rack #": rack_num_ref.current.value or "",
                 "Template": template_ref.current.value or "",
                 "Rack Type": rack_type_ref.current.value or "",
             }
+            if dtype == "Rack":
+                for f in auto_fill_fields:
+                    if f in auto_fill_field_refs and auto_fill_field_refs[f].current:
+                        props[f] = auto_fill_field_refs[f].current.value or ""
 
             print("Generated name:", name)
             print("Properties being saved:", props)
@@ -127,12 +173,20 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                         ft.dropdown.Option("Amplifier"),
                     ],
                     value="Rack",
+                    on_select=_auto_fill_from_template,
                 ),
                 # Only show these 4 for Rack (we can expand later)
                 ft.Dropdown(ref=location_ref, label="Rack Location", options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Location")], height=50),
                 ft.Dropdown(ref=rack_num_ref, label="Rack #", options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack #")], height=50),
-                ft.Dropdown(ref=template_ref, label="Template", options=[ft.dropdown.Option(o) for o in get_options_for_field("Template")], height=50),
-                ft.Dropdown(ref=rack_type_ref, label="Rack Type", options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Type")], height=50),
+                ft.Dropdown(ref=template_ref, label="Template", options=[ft.dropdown.Option(o) for o in get_options_for_field("Template")], height=50, on_select=_auto_fill_from_template),
+                ft.Dropdown(ref=rack_type_ref, label="Rack Type", options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Type")], height=50, on_select=_auto_fill_from_template),
+                # Auto-fill fields (populated from Template + Rack Type)
+                *[ft.Dropdown(
+                    ref=auto_fill_field_refs[f],
+                    label=f,
+                    options=[ft.dropdown.Option(o) for o in get_options_for_field(f)],
+                    height=50,
+                ) for f in auto_fill_fields],
             ],
             tight=True,
             scroll=ft.ScrollMode.AUTO,
@@ -143,6 +197,9 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
+
+    # Trigger initial auto-fill if the dropdowns happen to have values already set
+    _auto_fill_from_template()
 
     page.show_dialog(dlg)
 
@@ -164,28 +221,17 @@ def create_left_sidebar(
     def _load_items_from_db() -> list[DataEntry]:
         try:
             df = load_from_db("input_data")
-            raw_count = len(df)
-            print(f"[SIDEBAR] load_from_db returned {raw_count} raw rows")
-
             loaded = []
             for _, row in df.iterrows():
-                # Do NOT do "if row:" or "if not row:" here — row is a pandas Series
-                # and that causes "truth value of a Series is ambiguous".
+                # Avoid "if row:" — row is a pandas Series which causes "truth value of a Series is ambiguous".
                 try:
                     item = DataEntry.from_dict(row)
                     loaded.append(item)
-                except Exception as conv_err:
-                    print(f"[SIDEBAR]   Skipped row during from_dict: {conv_err}")
+                except Exception:
+                    pass  # skip bad rows silently
 
-            filtered = [item for item in loaded if item and getattr(item, 'device_type', None)]
-            print(f"[SIDEBAR] After conversion & filter: {len(filtered)} items (from {raw_count} raw)")
-            for it in filtered[:5]:  # show first few for debugging
-                print(f"    - {it.name} | type: {it.device_type}")
-            if len(filtered) > 5:
-                print(f"    ... and {len(filtered)-5} more")
-            return filtered
-        except Exception as ex:
-            print(f"[SIDEBAR] ERROR loading items from DB: {ex}")
+            return [item for item in loaded if item and getattr(item, 'device_type', None)]
+        except Exception:
             return []
 
     # Placeholder seeding has been disabled per user request.
@@ -208,26 +254,22 @@ def create_left_sidebar(
         expand=True,
     )
 
-    def refresh_list():
-        """Reload data from DB and refresh the sidebar list + auto-select latest."""
-        print("[SIDEBAR] === REFRESH_LIST CALLED (e.g. after create or New) ===")
+    def refresh_list(auto_select_latest: bool = True):
+        """Reload data from DB and refresh the sidebar list.
+        auto_select_latest: only auto-select the newest item on create (True),
+        pass False from edit saves to avoid deselecting current item.
+        """
         try:
             fdf = load_from_db("input_data")
-            print("Loaded rows from DB:", len(fdf))
             fresh = []
             for _, row in fdf.iterrows():
                 try:
                     item = DataEntry.from_dict(row)
                     if item is not None and getattr(item, 'device_type', None):
                         fresh.append(item)
-                except Exception as row_err:
-                    print("  Skipping bad row:", row_err)
-            print("Converted to valid DataEntry objects:", len(fresh))
-            print("After device_type filter:", len(fresh))
-            for it in fresh:
-                print("  - Loaded item:", it.name, "| type:", it.device_type)
-        except Exception as ex:
-            print("Error loading from DB in refresh_list:", ex)
+                except Exception:
+                    pass
+        except Exception:
             fresh = []
 
         _rebuild_item_list(
@@ -239,25 +281,21 @@ def create_left_sidebar(
             text_color=color_scheme.on_primary_container,
         )
 
-        if fresh:
+        if fresh and auto_select_latest:
             latest = max(fresh, key=lambda x: x.id or 0)
             app_state.select_item(latest)
-            print("Auto-selected latest item:", latest.name)
 
         # Extra updates to try to force redraw
         items_column.update()
         page.update()
-        print("=== REFRESH_LIST FINISHED ===")
 
     # Register so that File > New (and future global resets) can trigger this
     if hasattr(app_state, "register_sidebar_refresh"):
         app_state.register_sidebar_refresh(refresh_list)
 
     # Initial population — always do a fresh DB load + rebuild on startup.
-    # This is what makes all existing Racks appear immediately when you open the app.
-    print("[SIDEBAR] Performing initial load for sidebar on startup...")
+    # This ensures all existing Racks/Amps from the DB appear immediately when the app opens.
     fresh_items = _load_items_from_db()
-    print(f"[SIDEBAR] Passing {len(fresh_items)} items to initial _rebuild_item_list")
     _rebuild_item_list(
         items_column, 
         fresh_items, 
@@ -266,7 +304,6 @@ def create_left_sidebar(
         on_selection_changed,
         text_color=color_scheme.on_primary_container,
     )
-    print("[SIDEBAR] Initial sidebar build complete")
 
     content = ft.Container(
         content=ft.Column(
@@ -322,7 +359,7 @@ def _rebuild_item_list(
     """Rebuild the list of selectable items. 
     Does NOT call .update() — caller is responsible after the control is mounted.
     """
-    print(f"[SIDEBAR] _rebuild_item_list called with {len(items)} items")
+    print(f"_rebuild_item_list called with {len(items)} items")
     column.controls.clear()
 
     for item in items:

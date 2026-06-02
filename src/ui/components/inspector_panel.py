@@ -10,12 +10,14 @@ This replaces the previous "Edit Selected" panel with a more generic name.
 import flet as ft
 import pandas as pd
 
-from src.core.database import save_to_db
+from src.core.database import load_from_db, overwrite_data, save_to_db
 from src.core.models import (
     AMPLIFIER_FIELDS,
+    DataEntry,
     Device,
     RACK_FIELDS,
     get_fields_for_device,
+    get_options_for_field,
 )
 from typing import Any
 from src.ui.theme import (
@@ -55,53 +57,83 @@ RACK_TAB_AMPS = [f"Amp # {i}" for i in range(1, 17)]
 RACK_TAB_1U = ["1u A", "1u B"]
 
 
-def _attribute_tile(field_name: str, value: Any, color_scheme) -> ft.Container:
-    """Compact visual tile for a single Rack attribute.
-
-    TEMP DEBUG VERSION: Large text, fixed width, no expand to avoid layout collapse in tabs.
+def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=None) -> ft.Container:
+    """Compact visual tile for a single Rack attribute (label on top, value below).
+    Renders as Dropdown if the field has options in DEVICE_FIELD_OPTIONS, else TextField.
+    Saves on blur / submit (enter/tab) via the provided callback.
     """
-    display_value = str(value) if value not in (None, "", "nan") else "—"
+    display_value = str(value) if value is not None else ""
 
-    label_color = ft.Colors.BLACK
-    value_color = ft.Colors.DARK_BLUE
+    label = ft.Text(
+        field_name,
+        size=9,
+        weight=ft.FontWeight.BOLD,
+        color=color_scheme.on_secondary_container,
+        text_align=ft.TextAlign.CENTER,
+    )
+
+    options = get_options_for_field(field_name)
+
+    if on_value_changed and options:
+        # Dropdown for fields with predefined choices
+        value_ctrl = ft.Dropdown(
+            value=display_value if display_value else None,
+            options=[ft.dropdown.Option(str(o)) for o in options],
+            dense=True,
+            text_size=11,
+            height=32,
+            on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
+            border_color=color_scheme.outline,
+            focused_border_color=color_scheme.primary,
+            content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
+        )
+    elif on_value_changed:
+        # Free text
+        value_ctrl = ft.TextField(
+            value=display_value,
+            dense=True,
+            text_size=11,
+            height=28,
+            on_submit=lambda e, fn=field_name: on_value_changed(fn, e.control.value),
+            on_blur=lambda e, fn=field_name: on_value_changed(fn, e.control.value),
+            border_color=color_scheme.outline,
+            focused_border_color=color_scheme.primary,
+            content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
+        )
+    else:
+        value_ctrl = ft.Text(
+            display_value,
+            size=11,
+            weight=ft.FontWeight.W_500,
+            color=color_scheme.on_secondary_container,
+            text_align=ft.TextAlign.CENTER,
+        )
 
     return ft.Container(
         content=ft.Column(
             [
-                ft.Text(
-                    field_name,
-                    size=12,
-                    weight=ft.FontWeight.BOLD,
-                    color=label_color,
-                    text_align=ft.TextAlign.CENTER,
-                ),
-                ft.Text(
-                    display_value,
-                    size=14,
-                    weight=ft.FontWeight.BOLD,
-                    color=value_color,
-                    text_align=ft.TextAlign.CENTER,
-                ),
+                label,
+                value_ctrl,
             ],
-            spacing=2,
+            spacing=1,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             tight=True,
         ),
-        width=110,                    # Fixed width instead of expand
-        padding=ft.Padding.symmetric(horizontal=6, vertical=5),
+        width=110,
+        padding=ft.Padding.symmetric(horizontal=4, vertical=3),
         border=ft.Border(
-            left=ft.BorderSide(width=2, color=ft.Colors.BLACK),
-            top=ft.BorderSide(width=2, color=ft.Colors.BLACK),
-            right=ft.BorderSide(width=2, color=ft.Colors.BLACK),
-            bottom=ft.BorderSide(width=2, color=ft.Colors.BLACK),
+            left=ft.BorderSide(width=1, color=color_scheme.outline),
+            top=ft.BorderSide(width=1, color=color_scheme.outline),
+            right=ft.BorderSide(width=1, color=color_scheme.outline),
+            bottom=ft.BorderSide(width=1, color=color_scheme.outline),
         ),
-        border_radius=6,
-        bgcolor=ft.Colors.YELLOW_100,
+        border_radius=4,
+        bgcolor=color_scheme.primary_container,
         alignment=ft.Alignment.CENTER,
     )
 
 
-def _build_tab_content(field_names: list[str], props: dict, color_scheme) -> ft.Container:
+def _build_tab_content(field_names: list[str], props: dict, color_scheme, on_value_changed=None) -> ft.Container:
     """Builds scrollable tab content using compact tiles for the Rack inspector."""
     if not field_names:
         return ft.Container(
@@ -109,8 +141,7 @@ def _build_tab_content(field_names: list[str], props: dict, color_scheme) -> ft.
             padding=10,
         )
 
-    tiles = [_attribute_tile(name, props.get(name, ""), color_scheme) for name in field_names]
-    print(f"[INSPECTOR DEBUG]   Created {len(tiles)} tiles for section")
+    tiles = [_attribute_tile(name, props.get(name, ""), color_scheme, on_value_changed=on_value_changed) for name in field_names]
 
     # Wrap the tiles row in a scrollable Column for better behavior inside Tabs
     return ft.Container(
@@ -277,177 +308,177 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
             except Exception:
                 props = {}
 
+        # Holder (populated only for racks) so edits can refresh the tab contents list
+        _rack_refresh_state = {"contents": None, "selected": [0], "area": None}
+
+        def _save_field(field_name: str, new_value: str):
+            """Update the selected item's property and persist to DB.
+            Triggered on TextField blur or submit (enter/tab).
+            """
+            if not app_state.selected_item:
+                return
+            item = app_state.selected_item
+            if item.properties is None:
+                item.properties = {}
+            if str(item.properties.get(field_name, "")) == str(new_value or ""):
+                return  # no change
+            item.properties[field_name] = new_value or ""
+
+            try:
+                # Load current state, replace this item, overwrite DB
+                df = load_from_db("input_data")
+                current_items = []
+                replaced = False
+                for _, row in df.iterrows():
+                    # Do not do "if not row" — row is pandas Series (causes "truth value of a Series is ambiguous")
+                    it = DataEntry.from_dict(row)
+                    if it:
+                        # Match by id if available, else by name + device_type
+                        if (item.id is not None and it.id == item.id) or \
+                           (item.id is None and it.name == item.name and it.device_type == item.device_type):
+                            # mutate the freshly loaded it with the edit
+                            it.properties = dict(item.properties) if item.properties else {}
+                            current_items.append(it)
+                            replaced = True
+                        else:
+                            current_items.append(it)
+                if not replaced:
+                    current_items.append(item)  # or a copy, but ok
+
+                overwrite_data(current_items)
+
+                # For rack inspectors: re-build the tab contents from the *current* props so that
+                # switching tabs after an edit shows fresh data in the other tabs.
+                if _rack_refresh_state.get("contents") and _rack_refresh_state.get("area"):
+                    try:
+                        c0 = _build_tab_content(RACK_TAB_CORE, item.properties or {}, color_scheme, on_value_changed=_save_field)
+                        c1 = _build_tab_content(RACK_TAB_SIGNAL, item.properties or {}, color_scheme, on_value_changed=_save_field)
+                        c2f = RACK_TAB_AMPS + RACK_TAB_1U
+                        c2 = _build_tab_content(c2f, item.properties or {}, color_scheme, on_value_changed=_save_field)
+                        _rack_refresh_state["contents"][:] = [c0, c1, c2]
+                        _rack_refresh_state["area"].content = _rack_refresh_state["contents"][_rack_refresh_state["selected"][0]]
+                        _rack_refresh_state["area"].update()
+                    except Exception:
+                        pass
+
+                # Try to refresh sidebar list if callbacks registered (from AppState)
+                # Pass False so it does NOT auto-select latest (we want to keep current selection)
+                if hasattr(app_state, "_sidebar_refresh_callbacks"):
+                    for cb in list(getattr(app_state, "_sidebar_refresh_callbacks", [])):
+                        try:
+                            cb(auto_select_latest=False)
+                        except Exception:
+                            pass
+            except Exception as ex:
+                print(f"Save failed for {field_name}: {ex}")
+
         # Icon for the header
         icon = ft.Icons.SETTINGS if device_type.lower() == "rack" else ft.Icons.SPEAKER
 
-        # Assemble the inspector body
-        # Compact header: "Inspector" + selected item info on the same row
-        header_row = ft.Row(
-            [
-                ft.Text(
-                    "Inspector",
-                    size=15,
-                    weight=ft.FontWeight.BOLD,
-                    color=color_scheme.on_secondary_container,
-                ),
-                ft.Container(width=12),  # small spacer
-                ft.Icon(icon, size=16, color=color_scheme.on_secondary_container),
-                ft.Text(
-                    f"{device_type}: {display_name}",
-                    weight=ft.FontWeight.W_500,
-                    color=color_scheme.on_secondary_container,
-                ),
-            ],
-            spacing=4,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        inspector_body_children = [header_row]
+        inspector_body_children = []
 
         if device_type.lower() == "rack":
-            # === New compact header with tabs integrated + underlined ===
-            # Tabs: Core | Signal Routing | Amp Assignments (1U merged in)
+            # === Clean compact header with tabs integrated in the row + underline ===
+            # Tabs: Core | Signal Routing | Amp Assignments (1U fields inline in 3rd tab)
 
-            core_content = _build_tab_content(RACK_TAB_CORE, props, color_scheme)
-            signal_content = _build_tab_content(RACK_TAB_SIGNAL, props, color_scheme)
+            core_content = _build_tab_content(RACK_TAB_CORE, props, color_scheme, on_value_changed=_save_field)
+            signal_content = _build_tab_content(RACK_TAB_SIGNAL, props, color_scheme, on_value_changed=_save_field)
 
-            # Combine Amp Assignments + 1U Custom into one tab
-            amps_content = _build_tab_content(RACK_TAB_AMPS, props, color_scheme)
-            oneu_content = _build_tab_content(RACK_TAB_1U, props, color_scheme)
+            # 3rd tab: Amp Assignments + 1U Custom fields all in one flat wrapped grid
+            # (so the 2 1U fields appear inline with the other Amp fields)
+            third_tab_fields = RACK_TAB_AMPS + RACK_TAB_1U
+            third_tab_content = _build_tab_content(third_tab_fields, props, color_scheme, on_value_changed=_save_field)
 
-            print(f"[INSPECTOR DEBUG] Building tab contents for {display_name}")
-            # Better counting: look inside the debug wrappers
-            def count_tiles(c):
-                if not c: return 0
-                inner = getattr(c, 'content', c)
-                if hasattr(inner, 'controls'):
-                    for child in inner.controls:
-                        if hasattr(child, 'controls'):
-                            return len(child.controls)
-                return 0
-            print(f"  Core tiles:     {count_tiles(core_content)}")
-            print(f"  Signal tiles:   {count_tiles(signal_content)}")
-            print(f"  Amp tiles:      {count_tiles(amps_content)}")
-            print(f"  1U tiles:       {count_tiles(oneu_content)}")
-
-            # TEMP: Give each tab content a different light background so we can see them clearly
-            core_debug = ft.Container(
-                content=core_content,
-                bgcolor=ft.Colors.GREEN_50,
-                padding=4,
-                expand=True,
-            )
-            signal_debug = ft.Container(
-                content=signal_content,
-                bgcolor=ft.Colors.ORANGE_50,
-                padding=4,
-                expand=True,
-            )
-            amp_plus_1u_content = ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Text("Amp Assignments", size=10, weight=ft.FontWeight.W_600,
-                                color=color_scheme.on_secondary_container),
-                        amps_content,
-                        ft.Text("1U Custom", size=10, weight=ft.FontWeight.W_600,
-                                color=color_scheme.on_secondary_container),
-                        oneu_content,
-                    ],
-                    spacing=6,
-                    scroll=ft.ScrollMode.AUTO,
-                ),
-                bgcolor=ft.Colors.PURPLE_50,
-                padding=4,
-                expand=True,
-            )
-
-            tab_contents = [core_debug, signal_debug, amp_plus_1u_content]
-            tab_labels = ["Core", "Signal Routing", "Amp Assignments"]
+            tab_contents = [core_content, signal_content, third_tab_content]
+            tab_labels = ["Core", "Signal Routing", "Amp Assignments"]  # 3rd tab includes 1U fields inline
             selected_tab = [0]   # mutable index for live switching
 
-            # Content area must be created BEFORE the buttons (closure safety)
-            # TEMP DEBUG WRAPPER - bright background + border so we can see the real content bounds
+            # Content area (updated live on tab click)
             content_area = ft.Container(
                 content=tab_contents[selected_tab[0]],
                 expand=True,
                 padding=ft.Padding.only(top=4, bottom=4),
-                bgcolor=ft.Colors.LIGHT_BLUE_100,
-                border=ft.Border(
-                    left=ft.BorderSide(width=3, color=ft.Colors.BLUE),
-                    right=ft.BorderSide(width=3, color=ft.Colors.BLUE),
-                    top=ft.BorderSide(width=3, color=ft.Colors.BLUE),
-                    bottom=ft.BorderSide(width=3, color=ft.Colors.BLUE),
-                ),
             )
 
-            # We need a container for the header so we can rebuild it when tabs change
-            header_container = ft.Container()
+            # Populate holder so future saves can refresh the tab contents from updated props
+            _rack_refresh_state["contents"] = tab_contents
+            _rack_refresh_state["selected"] = selected_tab
+            _rack_refresh_state["area"] = content_area
 
-            def rebuild_header():
-                """Rebuilds the header row with correct tab button states."""
-                tab_buttons = []
-                for i, label in enumerate(tab_labels):
-                    is_selected = (i == selected_tab[0])
+            # Build the header row with tab buttons that update in place
+            tab_button_controls = []
 
-                    def make_switcher(idx):
-                        def _switch(e):
-                            selected_tab[0] = idx
-                            content_area.content = tab_contents[selected_tab[0]]
-                            rebuild_header()           # refresh tab highlights
-                            try:
-                                header_container.update()
-                                content_area.update()
-                            except Exception:
-                                pass
-                        return _switch
+            def make_switcher(idx):
+                def _switch(e):
+                    selected_tab[0] = idx
+                    content_area.content = tab_contents[selected_tab[0]]
+                    # Update button styles for highlight
+                    for j, btn in enumerate(tab_button_controls):
+                        is_sel = (j == selected_tab[0])
+                        btn.bgcolor = color_scheme.primary_container if is_sel else ft.Colors.TRANSPARENT
+                        txt = btn.content
+                        if isinstance(txt, ft.Text):
+                            txt.weight = ft.FontWeight.BOLD if is_sel else ft.FontWeight.W_600
+                            txt.color = color_scheme.on_primary_container if is_sel else color_scheme.on_secondary_container
+                        try:
+                            btn.update()
+                        except Exception:
+                            pass
+                    try:
+                        content_area.update()
+                    except Exception:
+                        pass
+                return _switch
 
-                    btn = ft.Container(
-                        content=ft.Text(
-                            label,
-                            size=13,
-                            weight=ft.FontWeight.BOLD if is_selected else ft.FontWeight.W_600,
-                            color=color_scheme.on_primary_container if is_selected else color_scheme.on_secondary_container,
-                        ),
-                        padding=ft.Padding.symmetric(horizontal=12, vertical=4),
-                        bgcolor=color_scheme.primary_container if is_selected else ft.Colors.TRANSPARENT,
-                        border_radius=4,
-                        on_click=make_switcher(i),
-                        tooltip=f"Show {label}",
-                    )
-                    tab_buttons.append(btn)
-
-                compact_header = ft.Row(
-                    [
-                        ft.Text(
-                            "Inspector",
-                            size=15,
-                            weight=ft.FontWeight.BOLD,
-                            color=color_scheme.on_secondary_container,
-                        ),
-                        ft.Container(width=8),
-                        ft.Icon(icon, size=15, color=color_scheme.on_secondary_container),
-                        ft.Text(
-                            f"{device_type}: {display_name}",
-                            weight=ft.FontWeight.W_500,
-                            color=color_scheme.on_secondary_container,
-                        ),
-                        ft.Container(expand=True),
-                        *tab_buttons,
-                    ],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            tab_buttons = []
+            for i, label in enumerate(tab_labels):
+                is_selected = (i == selected_tab[0])
+                txt = ft.Text(
+                    label,
+                    size=13,
+                    weight=ft.FontWeight.BOLD if is_selected else ft.FontWeight.W_600,
+                    color=color_scheme.on_primary_container if is_selected else color_scheme.on_secondary_container,
                 )
+                btn = ft.Container(
+                    content=txt,
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=4),
+                    bgcolor=color_scheme.primary_container if is_selected else ft.Colors.TRANSPARENT,
+                    border_radius=4,
+                    on_click=make_switcher(i),
+                    tooltip=f"Show {label}",
+                )
+                tab_buttons.append(btn)
+                tab_button_controls.append(btn)
 
-                header_container.content = compact_header
+            compact_header = ft.Row(
+                [
+                    ft.Text(
+                        "Inspector",
+                        size=15,
+                        weight=ft.FontWeight.BOLD,
+                        color=color_scheme.on_secondary_container,
+                    ),
+                    ft.Container(width=8),
+                    ft.Icon(icon, size=15, color=color_scheme.on_secondary_container),
+                    ft.Text(
+                        f"{device_type}: {display_name}",
+                        weight=ft.FontWeight.W_500,
+                        color=color_scheme.on_secondary_container,
+                    ),
+                    ft.Container(expand=True),
+                    *tab_buttons,
+                ],
+                spacing=4,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
 
-            # Initial header build
-            rebuild_header()
+            header_container = ft.Container(content=compact_header)
 
             # Underline for the entire header row
             header_underline = ft.Container(
                 height=1,
                 bgcolor=color_scheme.outline,
-                margin=ft.Padding.only(bottom=6),
+                margin=ft.margin.Margin(bottom=6),
             )
 
             inspector_body_children = [
@@ -460,20 +491,42 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
             # ============================================================
             # GENERIC / AMPLIFIER LAYOUT (vertical list is still fine)
             # ============================================================
+            # Simple header for non-rack
+            header_row = ft.Row(
+                [
+                    ft.Text(
+                        "Inspector",
+                        size=15,
+                        weight=ft.FontWeight.BOLD,
+                        color=color_scheme.on_secondary_container,
+                    ),
+                    ft.Container(width=12),
+                    ft.Icon(icon, size=16, color=color_scheme.on_secondary_container),
+                    ft.Text(
+                        f"{device_type}: {display_name}",
+                        weight=ft.FontWeight.W_500,
+                        color=color_scheme.on_secondary_container,
+                    ),
+                ],
+                spacing=4,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            inspector_body_children = [header_row]
+
             fields = get_fields_for_device(item) or AMPLIFIER_FIELDS
             generic_fields = []
             for field_name in fields:
                 value = props.get(field_name, "")
-                generic_fields.append(
-                    ft.TextField(
-                        label=field_name,
-                        value=str(value) if value is not None else "",
-                        height=32,
-                        text_size=11,
-                        read_only=True,
-                        dense=True,
-                    )
+                tf = ft.TextField(
+                    label=field_name,
+                    value=str(value) if value is not None else "",
+                    height=32,
+                    text_size=11,
+                    dense=True,
+                    on_submit=lambda e, fn=field_name: _save_field(fn, e.control.value),
+                    on_blur=lambda e, fn=field_name: _save_field(fn, e.control.value),
                 )
+                generic_fields.append(tf)
 
             inspector_body_children.append(
                 ft.Container(
