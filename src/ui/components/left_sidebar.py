@@ -216,6 +216,21 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                 print("Calling refresh callback...")
                 on_created()
 
+            # After creating an amp, trigger inspector refresh so amp assignment dropdowns
+            # (in rack's Amp Assignments tab) get the latest list of amps from DB.
+            # (Create auto-selects the new amp so inspector shows it; re-select the rack to assign the new amp.)
+            try:
+                if hasattr(page, "_app_state"):
+                    as_ = page._app_state
+                    if hasattr(as_, "_inspector_refresh_callbacks"):
+                        for cb in list(getattr(as_, "_inspector_refresh_callbacks", [])):
+                            try:
+                                cb()
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
             page.pop_dialog()
             page.update()
             print("=== CREATE SAVE FINISHED ===")

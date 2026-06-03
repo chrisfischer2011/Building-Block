@@ -19,6 +19,7 @@ from src.core.models import (
     get_display_name,
     get_fields_for_device,
     get_options_for_field,
+    get_rack_name,
     normalize_amp_id,
 )
 from typing import Any
@@ -29,7 +30,7 @@ from src.ui.theme import (
     EMPTY_STATE_PADDING,
     FORM_SPACING,
 )
-from src.utils.feedback import show_coming_soon
+from src.utils.feedback import show_coming_soon, show_success
 
 
 # =============================================================================
@@ -57,6 +58,25 @@ RACK_TAB_SIGNAL = [
 RACK_TAB_AMPS = [f"Amp # {i}" for i in range(1, 17)]
 
 RACK_TAB_1U = ["1u A", "1u B"]
+
+
+def _get_amp_options() -> list[str]:
+    """Dynamically fetch current amplifiers from the database to use as dropdown options
+    for the Amp assignment fields (Amp # 1..16) in the rack inspector's Amp Assignments tab.
+    Returns list of amp display names (e.g. "1.00 D90").
+    """
+    try:
+        df = load_from_db("input_data")
+        options = []
+        for _, row in df.iterrows():
+            if str(row.get("device_type", "")).lower() != "amplifier":
+                continue
+            it = DataEntry.from_dict(row)
+            if it and it.name:
+                options.append(it.name)
+        return sorted(options)
+    except Exception:
+        return []
 
 # =============================================================================
 # Tab definitions for Amplifier Inspector (user-specified grouping)
@@ -111,20 +131,40 @@ def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=
     )
 
     options = get_options_for_field(field_name)
+    # Special case for rack Amp assignment slots: ALWAYS fetch fresh list of amps from DB
+    # so the dropdown is dynamic and immediately includes newly added amps (no stale list).
+    # Prepend "" so user can manually clear a single slot via dropdown if desired (primary unassign is rack-level + global).
+    if field_name.startswith("Amp # "):
+        options = [""] + _get_amp_options()
 
     if on_value_changed and options:
-        # Dropdown for fields with predefined choices
-        value_ctrl = ft.Dropdown(
-            value=display_value if display_value else None,
-            options=[ft.dropdown.Option(str(o)) for o in options],
-            dense=True,
-            text_size=11,
-            height=32,
-            on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
-            border_color=color_scheme.outline,
-            focused_border_color=color_scheme.primary,
-            content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
-        )
+        if field_name.startswith("Amp # "):
+            # Dropdown for rack amp assignment slots (includes blank first option to allow manual unassign of a single slot).
+            # Main unassign is now via the rack-level "Unassign all" button in the tab and the global File menu item.
+            value_ctrl = ft.Dropdown(
+                value=display_value if display_value else None,
+                options=[ft.dropdown.Option(str(o)) for o in options],
+                dense=True,
+                text_size=11,
+                height=32,
+                on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
+                border_color=color_scheme.outline,
+                focused_border_color=color_scheme.primary,
+                content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
+            )
+        else:
+            # Dropdown for fields with predefined choices
+            value_ctrl = ft.Dropdown(
+                value=display_value if display_value else None,
+                options=[ft.dropdown.Option(str(o)) for o in options],
+                dense=True,
+                text_size=11,
+                height=32,
+                on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
+                border_color=color_scheme.outline,
+                focused_border_color=color_scheme.primary,
+                content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
+            )
     elif on_value_changed:
         # Free text
         value_ctrl = ft.TextField(
@@ -163,6 +203,7 @@ def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=
             text_align=ft.TextAlign.CENTER,
         )
 
+    tile_width = 110
     return ft.Container(
         content=ft.Column(
             [
@@ -173,7 +214,7 @@ def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             tight=True,
         ),
-        width=110,
+        width=tile_width,
         padding=ft.Padding.symmetric(horizontal=4, vertical=3),
         border=ft.Border(
             left=ft.BorderSide(width=1, color=color_scheme.outline),
@@ -431,8 +472,9 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
             except Exception:
                 pass
 
-            # For racks, after name recompute from naming fields (loc or #), ensure no duplicate name
-            if (getattr(item, "device_type", "") or "").lower() == "rack":
+            # For racks, after name recompute from naming fields (loc or #), ensure no duplicate name.
+            # Only check for actual naming field edits to avoid false positives on other fields like Amp assignments.
+            if (getattr(item, "device_type", "") or "").lower() == "rack" and field_name in ["Rack Location", "Rack #"]:
                 proposed_name = item.name
                 if proposed_name and is_rack_name_taken(proposed_name, exclude_id=getattr(item, "id", None)):
                     item.properties[field_name] = old_value
@@ -443,6 +485,12 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                     show_coming_soon(page, f"Cannot use this — it would create duplicate rack name '{proposed_name}' (e.g. never two SL2).")
                     _refresh_inspector(app_state)
                     return
+
+            # If this was an amp *naming* change (Amp ID or Amp Type), propagate the *new* display name
+            # into any rack slots that were pointing at the old name string. Keeps assignments consistent.
+            name_changed = False
+            if (getattr(item, "device_type", "") or "").lower() == "amplifier" and match_name and item.name and match_name != item.name:
+                name_changed = True
 
             try:
                 # Load current state from DB, find the matching item by id (preferred) or name+type,
@@ -482,7 +530,181 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                     # Fallback: keep the live item (it already has updated props + name)
                     items.append(item)
 
+                # === RELATIONSHIP SYNC: rack <-> amp (forward assign/move/unassign + reverse + rack-level unassign) ===
+                # We operate on the already-loaded `items` list (primary edited item already synced in).
+                # All cross updates (rack slots + amp props) happen here, then a *single* overwrite_data.
+                # Rack assignment now moves an amp if it's assigned elsewhere (instead of blocking).
+                # This keeps rack slots and amp "Rack Location/Rack #/Amp #" in sync in both directions.
+
+                is_rack_edit = (getattr(item, "device_type", "") or "").lower() == "rack"
+                is_amp_edit = (getattr(item, "device_type", "") or "").lower() == "amplifier"
+                amp_slots = [f"Amp # {i}" for i in range(1, 17)]
+
+                # --- Name propagation for amps (if Amp ID/Type changed, update rack slot strings) ---
+                if name_changed and match_name and item.name:
+                    for r in items:
+                        if (getattr(r, "device_type", "") or "").lower() != "rack":
+                            continue
+                        for sl in amp_slots:
+                            if (r.properties.get(sl, "") or "").strip() == (match_name or "").strip():
+                                r.properties[sl] = item.name
+                                print(f"[DEBUG] Propagated amp name change in rack slot {sl}: '{match_name}' -> '{item.name}'")
+
+                # --- Forward: rack Amp # slot edited (assign, move amp from elsewhere, change occupant, or unassign/clear) ---
+                if is_rack_edit and field_name.startswith("Amp # "):
+                    new_amp = (new_value or "").strip()
+                    old_amp_in_slot = (old_value or "").strip()
+                    rack_loc = item.properties.get("Rack Location", "") or ""
+                    rack_num = item.properties.get("Rack #", "") or ""
+                    amp_slot = field_name
+
+                    # Support moving an amp that is already assigned elsewhere (user request).
+                    # Instead of preventing, clear it from its old rack/slot (anywhere), then assign here.
+                    # This updates the amp to the *new* position (rack loc/# + this slot).
+                    if new_amp:
+                        old_r = None
+                        old_sl = None
+                        for r in items:
+                            if (getattr(r, "device_type", "") or "").lower() != "rack":
+                                continue
+                            for sl in amp_slots:
+                                if (r.properties.get(sl, "") or "").strip() == new_amp:
+                                    rloc = (r.properties.get("Rack Location", "") or "").strip()
+                                    rnum = (r.properties.get("Rack #", "") or "").strip()
+                                    this_loc = (item.properties.get("Rack Location", "") or "").strip()
+                                    this_num = (item.properties.get("Rack #", "") or "").strip()
+                                    if rloc == this_loc and rnum == this_num and sl == field_name:
+                                        old_r = None
+                                        old_sl = None  # already correctly here
+                                        break
+                                    old_r = r
+                                    old_sl = sl
+                                    break
+                            if old_sl:
+                                break
+                        if old_r and old_sl:
+                            old_r.properties[old_sl] = ""
+                            print(f"[DEBUG] Relocate (rack assign): amp '{new_amp}' was in {old_sl} — cleared old slot to move it here")
+
+                    # Unassign previous occupant of *this* slot (if changing or clearing)
+                    if old_amp_in_slot and old_amp_in_slot != new_amp:
+                        for it in items:
+                            if it and (getattr(it, "device_type", "") or "").lower() == "amplifier":
+                                if (getattr(it, "name", "") or "").strip() == old_amp_in_slot:
+                                    it.properties = it.properties or {}
+                                    it.properties["Rack Location"] = ""
+                                    it.properties["Rack #"] = ""
+                                    it.properties["Amp #"] = ""
+                                    print(f"[DEBUG] Unassigned previous occupant '{old_amp_in_slot}' from {field_name} (cleared its rack info)")
+                                    break
+
+                    # Assign (or re-assign) the new amp to this rack/slot (also handles clear when new_amp=="")
+                    if new_amp:
+                        print(f"[DEBUG] Amp assignment save (forward): rack assigning '{new_amp}' to {field_name}")
+                        print(f"[DEBUG] Using rack_loc={rack_loc!r} rack_num={rack_num!r}")
+                        found_amp = None
+                        amp_names_seen = []
+                        target_name = new_amp
+                        for it in items:
+                            if it and (getattr(it, "device_type", "") or "").lower() == "amplifier":
+                                nm = (getattr(it, "name", "") or "").strip()
+                                amp_names_seen.append(nm)
+                                if nm == target_name:
+                                    found_amp = it
+                                    break
+                                try:
+                                    comp = get_display_name(it.device_type, it.properties or {})
+                                    if comp.strip() == target_name:
+                                        found_amp = it
+                                        if getattr(it, "name", None) != comp:
+                                            it.name = comp
+                                        break
+                                except Exception:
+                                    pass
+                        if found_amp:
+                            found_amp.properties = found_amp.properties or {}
+                            found_amp.properties["Rack Location"] = rack_loc
+                            found_amp.properties["Rack #"] = rack_num
+                            found_amp.properties["Amp #"] = amp_slot
+                            print(f"[DEBUG] Found amp, set its props -> Rack Location={rack_loc!r} etc.")
+                        else:
+                            print(f"[DEBUG] WARNING: target amp '{new_amp}' not found among loaded items")
+                            print(f"[DEBUG] Amp names seen: {amp_names_seen}")
+                    else:
+                        # Clearing this slot (new_amp == ""): the old occupant unassign above already did the work.
+                        print(f"[DEBUG] Amp slot {field_name} cleared on rack (unassign propagated if there was an occupant)")
+
+                # --- Reverse: amp's Rack Location / Rack # / Amp # edited ---
+                # The amp declares where it belongs. Make rack side(s) match: clear from old location(s),
+                # set the (possibly new) slot on the target rack if loc+#+slot are all provided.
+                # This also supports "unassign" by clearing the three fields on the amp.
+                if is_amp_edit and field_name in ["Rack Location", "Rack #", "Amp #"]:
+                    current_amp_name = (item.name or match_name or "").strip()
+                    aloc = (item.properties.get("Rack Location", "") or "").strip()
+                    anum = (item.properties.get("Rack #", "") or "").strip()
+                    aslot = (item.properties.get("Amp #", "") or "").strip()
+
+                    # 1. Remove this amp (by its pre-edit name to be robust) from *any* rack slots that reference it.
+                    #    (handles move, unassign, or even name change side-effect)
+                    cleared_from = []
+                    for r in items:
+                        if (getattr(r, "device_type", "") or "").lower() != "rack":
+                            continue
+                        for sl in amp_slots:
+                            if (r.properties.get(sl, "") or "").strip() == (match_name or current_amp_name):
+                                r.properties[sl] = ""
+                                cleared_from.append(f"{sl} on rack {r.name or '(unnamed)'}")
+                    if cleared_from:
+                        print(f"[DEBUG] Reverse: cleared amp '{match_name or current_amp_name}' from rack slot(s): {cleared_from}")
+
+                    # 2. If the amp now fully declares an assignment, find the target rack by loc + # and set its slot.
+                    if aloc and anum and aslot:
+                        target_found = False
+                        for r in items:
+                            if (getattr(r, "device_type", "") or "").lower() != "rack":
+                                continue
+                            rloc = (r.properties.get("Rack Location", "") or "").strip()
+                            rnum = (r.properties.get("Rack #", "") or "").strip()
+                            if rloc == aloc and rnum == anum:
+                                # Target rack found. If the slot is occupied by a *different* amp, unassign that one first (claim the slot).
+                                current_in_slot = (r.properties.get(aslot, "") or "").strip()
+                                if current_in_slot and current_in_slot != current_amp_name:
+                                    for oa in items:
+                                        if (getattr(oa, "device_type", "") or "").lower() == "amplifier" and (getattr(oa, "name", "") or "").strip() == current_in_slot:
+                                            oa.properties = oa.properties or {}
+                                            oa.properties["Rack Location"] = ""
+                                            oa.properties["Rack #"] = ""
+                                            oa.properties["Amp #"] = ""
+                                            print(f"[DEBUG] Reverse: displaced previous amp '{current_in_slot}' from {aslot} to make room")
+                                            break
+                                r.properties[aslot] = current_amp_name
+                                target_found = True
+                                print(f"[DEBUG] Reverse: amp '{current_amp_name}' now assigned via rack edit -> set {aslot} on matching rack (loc={aloc}, #={anum})")
+                                break
+                        if not target_found:
+                            print(f"[DEBUG] Reverse: amp claims loc={aloc} #={anum} slot={aslot}, but no matching rack found (dangling claim kept on amp)")
+
                 overwrite_data(items)
+
+                # Post-write verification / debug for assignment changes (forward or reverse)
+                if is_rack_edit and field_name.startswith("Amp # "):
+                    try:
+                        verify_df = load_from_db("input_data")
+                        for _, r in verify_df.iterrows():
+                            v = DataEntry.from_dict(r)
+                            if v and (getattr(v, "device_type", "") or "").lower() == "amplifier":
+                                vname = (getattr(v, "name", "") or "").strip()
+                                if new_value and vname == (new_value or "").strip():
+                                    vp = v.properties or {}
+                                    print(f"[DEBUG] VERIFIED (forward): amp '{vname}' now has Rack Location={vp.get('Rack Location')!r} Rack#={vp.get('Rack #')!r} Amp#={vp.get('Amp #')!r}")
+                                if old_value and vname == (old_value or "").strip() and not new_value:
+                                    vp = v.properties or {}
+                                    print(f"[DEBUG] VERIFIED (unassign): previous amp '{vname}' now cleared (Rack Location={vp.get('Rack Location')!r} etc.)")
+                    except Exception as ex:
+                        print(f"[DEBUG] VERIFICATION load failed: {ex}")
+
+                if is_amp_edit and field_name in ["Rack Location", "Rack #", "Amp #"]:
+                    print(f"[DEBUG] Reverse sync complete for amp edit of {field_name}. Current amp claim: loc={aloc!r} #={anum!r} slot={aslot!r}")
 
                 # Re-build the tab contents from the *current* props so that
                 # switching tabs after an edit shows fresh data in the other tabs.
@@ -637,8 +859,95 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
 
             # 3rd tab: Amp Assignments + 1U Custom fields all in one flat wrapped grid
             # (so the 2 1U fields appear inline with the other Amp fields)
+            # Unassign button for the entire rack (not per-slot) as requested.
             third_tab_fields = RACK_TAB_AMPS + RACK_TAB_1U
-            third_tab_content = _build_tab_content(third_tab_fields, props, color_scheme, on_value_changed=_save_field)
+
+            def _unassign_all_for_this_rack(e):
+                """Clear all Amp # 1..16 slots on the current rack and sync-unassign the amps (clear their 3 fields).
+                Uses one atomic load/mutate/overwrite + refreshes so sidebar + inspector update.
+                """
+                if not app_state.selected_item or (getattr(app_state.selected_item, "device_type", "") or "").lower() != "rack":
+                    return
+                rk = app_state.selected_item
+                assigned = []
+                for sl in RACK_TAB_AMPS:
+                    val = (rk.properties.get(sl, "") or "").strip()
+                    if val:
+                        assigned.append(val)
+                        rk.properties[sl] = ""
+                if not assigned:
+                    return
+                try:
+                    df = load_from_db("input_data")
+                    items = []
+                    for _, row in df.iterrows():
+                        it = DataEntry.from_dict(row)
+                        if it:
+                            # Update the rack copy from live (slots cleared on rk)
+                            if it.name == rk.name and it.device_type == rk.device_type:
+                                it.properties = dict(rk.properties or {})
+                                if getattr(rk, "name", None):
+                                    it.name = rk.name
+                            items.append(it)
+                    # Clear the amps that were in the slots
+                    for amp_name in assigned:
+                        for it in items:
+                            if it and (getattr(it, "device_type", "") or "").lower() == "amplifier":
+                                if (getattr(it, "name", "") or "").strip() == amp_name:
+                                    it.properties = it.properties or {}
+                                    it.properties["Rack Location"] = ""
+                                    it.properties["Rack #"] = ""
+                                    it.properties["Amp #"] = ""
+                                    print(f"[DEBUG] Unassign all (this rack): cleared {amp_name}")
+                                    break
+                    overwrite_data(items)
+                    # Refresh UI (keep current selection)
+                    if hasattr(app_state, "_sidebar_refresh_callbacks"):
+                        for cb in list(getattr(app_state, "_sidebar_refresh_callbacks", [])):
+                            try:
+                                cb(auto_select_latest=False)
+                            except Exception:
+                                pass
+                    _refresh_inspector(app_state)
+                    try:
+                        show_success(page, f"Unassigned {len(assigned)} amp(s) from this rack")
+                    except Exception:
+                        pass
+                except Exception as ex:
+                    print(f"[Unassign all for rack] failed: {ex}")
+                    show_coming_soon(page, f"Unassign all failed: {ex}")
+
+            unassign_header = ft.Row(
+                [
+                    ft.Text("Amp Assignments", size=10, weight=ft.FontWeight.BOLD, color=color_scheme.on_secondary_container),
+                    ft.Container(expand=True),
+                    ft.TextButton(
+                        "Unassign all amps from this rack",
+                        icon=ft.Icons.CLEAR_ALL,
+                        tooltip="Clear every Amp # slot on this rack and remove the assignments from the amps",
+                        on_click=_unassign_all_for_this_rack,
+                        style=ft.ButtonStyle(
+                            padding=ft.Padding.only(left=6, right=6, top=1, bottom=1),
+                            text_style=ft.TextStyle(size=9),
+                        ),
+                    ),
+                ],
+                spacing=4,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
+            base_tiles = _build_tab_content(third_tab_fields, props, color_scheme, on_value_changed=_save_field)
+            third_tab_content = ft.Container(
+                content=ft.Column(
+                    [
+                        unassign_header,
+                        base_tiles,
+                    ],
+                    spacing=4,
+                    expand=True,
+                ),
+                expand=True,
+            )
 
             tab_contents = [core_content, signal_content, third_tab_content]
             tab_labels = ["Core", "Signal Routing", "Amp Assignments"]  # 3rd tab includes 1U fields inline
