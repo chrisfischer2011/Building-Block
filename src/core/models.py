@@ -258,11 +258,49 @@ def get_options_for_field(field_name: str) -> list[str]:
     return DEVICE_FIELD_OPTIONS.get(field_name, [])
 
 
+def normalize_amp_id(value: str | float | int | None) -> str:
+    """Normalize an Amp ID to always have exactly 2 decimal places.
+
+    Examples:
+        1      -> "1.00"
+        1.1    -> "1.10"
+        1.234  -> "1.23"
+        "1.00" -> "1.00"
+        "" or None or invalid -> original stripped (validation elsewhere will reject)
+    """
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    try:
+        f = float(s)
+        return f"{f:.2f}"
+    except (ValueError, TypeError):
+        return s
+
+
+def get_rack_name(location: str, rack_number: str | int) -> str:
+    """Compute the rack display name from location and rack number (e.g. 'SL2').
+
+    Same logic as used in get_display_name for racks.
+    """
+    loc = location or ""
+    num = str(rack_number or "").strip()
+    import re
+    m = re.search(r'\(([^)]+)\)', loc)
+    pref = m.group(1) if m else "".join(c for c in loc if c.isupper())[:2] or "RACK"
+    if num:
+        return f"{pref}{num}"
+    return pref or "Rack"
+
+
 def get_display_name(device_type: str, properties: dict) -> str:
     """Compute the canonical display name for a device based on its type and key properties.
 
     This is used both at creation time and when "naming fields" are edited in the inspector
     so that the sidebar list and inspector header stay in sync with the data.
+    Amp IDs are always normalized to 2 decimal places.
     """
     dtype = (device_type or "").lower()
     props = properties or {}
@@ -270,16 +308,10 @@ def get_display_name(device_type: str, properties: dict) -> str:
     if dtype == "rack":
         loc = props.get("Rack Location", "") or ""
         num = props.get("Rack #", "") or ""
-        import re
-        m = re.search(r'\(([^)]+)\)', loc)
-        pref = m.group(1) if m else "".join(c for c in loc if c.isupper())[:2] or "RACK"
-        num_str = str(num).strip()
-        if num_str:
-            return f"{pref}{num_str}"
-        return pref or "Rack"
+        return get_rack_name(loc, num)
 
     elif dtype == "amplifier":
-        amp_id = str(props.get("Amp ID", "") or "").strip()
+        amp_id = normalize_amp_id(props.get("Amp ID", ""))
         amp_type = str(props.get("Amp Type", "") or "").strip()
         if amp_id and amp_type:
             return f"{amp_id} {amp_type}"

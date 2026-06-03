@@ -10,12 +10,14 @@ This is the generic version of what was previously the Rack & Amp selector.
 import flet as ft
 import pandas as pd
 
-from src.core.database import load_from_db, save_to_db
+from src.core.database import get_next_free_amp_id, get_taken_amp_ids, get_taken_rack_names, is_amp_id_taken, is_rack_name_taken, load_from_db, save_to_db
 from src.core.models import (
     DataEntry,
     get_display_name,
     get_options_for_field,
+    get_rack_name,
     get_rack_template_defaults,
+    normalize_amp_id,
 )
 from src.ui.theme import (
     CARD_CONTENT_PADDING,
@@ -152,6 +154,15 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                 amp_id = amp_field_refs["Amp ID"].current.value or "" if amp_field_refs.get("Amp ID") and amp_field_refs["Amp ID"].current else ""
                 mode = amp_field_refs["Mode"].current.value or "" if amp_field_refs.get("Mode") and amp_field_refs["Mode"].current else ""
 
+                # Normalize Amp ID to always have exactly 2 decimal places (e.g. 1 -> 1.00, 1.1 -> 1.10)
+                amp_id = normalize_amp_id(amp_id)
+                amp_id_ref = amp_field_refs.get("Amp ID")
+                if amp_id_ref and amp_id_ref.current:
+                    try:
+                        amp_id_ref.current.value = amp_id
+                    except Exception:
+                        pass
+
                 props = {
                     "Rack Location": loc,
                     "Rack #": num,
@@ -164,28 +175,29 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                     if f in amp_field_refs and amp_field_refs[f].current:
                         props[f] = amp_field_refs[f].current.value or ""
 
-                # Enforce unique Amp ID (as requested)
+                # Validate Amp ID: numeric 0.01-99.99 and unique (better UX than before)
                 if amp_id:
                     try:
-                        import json
-                        df = load_from_db("input_data")
-                        for _, row in df.iterrows():
-                            if str(row.get("device_type", "")).lower() == "amplifier":
-                                pstr = row.get("properties", "{}")
-                                try:
-                                    p = json.loads(pstr) if isinstance(pstr, str) else (pstr or {})
-                                    existing = str(p.get("Amp ID", "")).strip()
-                                    if existing and existing == str(amp_id).strip():
-                                        show_coming_soon(page, f"Amp ID '{amp_id}' is already in use — must be unique.")
-                                        return
-                                except Exception:
-                                    pass
-                    except Exception as ex:
-                        print("Amp ID uniqueness check error:", ex)
+                        val = float(amp_id)
+                        if not (0.01 <= val <= 99.99):
+                            show_coming_soon(page, "Amp ID must be a number between 0.01 and 99.99")
+                            return
+                    except (ValueError, TypeError):
+                        show_coming_soon(page, "Amp ID must be numeric (e.g. 1.01 or 42.5)")
+                        return
+
+                    if is_amp_id_taken(amp_id):
+                        show_coming_soon(page, f"Amp ID '{amp_id}' is already in use — must be unique.")
+                        return
 
             # Central name generation (for amps this yields "AmpID AmpType" e.g. "1.01 D90";
             # for racks it yields the location-pref + rack#)
             name = get_display_name(dtype, props)
+
+            # Prevent duplicate rack names (e.g. two SL2) - similar to amp ID uniqueness
+            if dtype == "Rack" and is_rack_name_taken(name):
+                show_coming_soon(page, f"Rack name '{name}' is already in use — must be unique (e.g. never two SL2).")
+                return
 
             print("Generated name:", name)
             print("Properties being saved:", props)
@@ -213,6 +225,37 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             traceback.print_exc()
             show_coming_soon(page, f"Create failed: {str(ex)}")
 
+    def _update_rack_suggestion(e=None):
+        """When Rack Location or Rack # changes in create form, if the would-be name
+        (e.g. SL2) is already taken, automatically advance to the next free rack # for
+        that location so user never creates a duplicate name like two SL2.
+        Also handles initial/empty selection by picking first free.
+        """
+        if not location_ref.current or not rack_num_ref.current:
+            return
+        loc_val = location_ref.current.value or ""
+        try:
+            current_num = int(rack_num_ref.current.value or 0)
+        except (ValueError, TypeError):
+            current_num = 0
+        if current_num < 1:
+            current_num = 1
+            try:
+                rack_num_ref.current.value = "1"
+            except Exception:
+                pass
+        name = get_rack_name(loc_val, current_num)
+        if is_rack_name_taken(name):
+            for n in range(1, 11):
+                test_name = get_rack_name(loc_val, n)
+                if not is_rack_name_taken(test_name):
+                    rack_num_ref.current.value = str(n)
+                    try:
+                        rack_num_ref.current.update()
+                    except Exception:
+                        pass
+                    break
+
     # --- Build the form controls (shared + type-specific groups for dynamic switching) ---
 
     # Shared fields (Rack Location + Rack # are used by both Racks and Amps for assignment)
@@ -221,13 +264,18 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         label="Rack Location",
         options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Location")],
         height=50,
+        on_select=_update_rack_suggestion,
     )
     rack_dd = ft.Dropdown(
         ref=rack_num_ref,
         label="Rack #",
         options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack #")],
         height=50,
+        on_select=_update_rack_suggestion,
     )
+
+    # Bootstrap initial free rack name suggestion (so first open for rack also avoids duplicates)
+    _update_rack_suggestion()
 
     # Rack-only controls (the original Template / Rack Type + 16 auto-fill signal fields)
     template_dd = ft.Dropdown(
@@ -244,6 +292,16 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         height=50,
         on_select=_auto_fill_from_template,
     )
+
+    # Info about taken rack names so user never creates duplicate like two "SL2"
+    taken_rack_names = get_taken_rack_names()
+    taken_rack_text = ft.Text(
+        f"Taken Rack names (never duplicate e.g. 2 SL2): {', '.join(sorted(taken_rack_names)) if taken_rack_names else 'none yet'}",
+        size=9,
+        italic=True,
+        color=ft.Colors.GREY_700,
+    )
+
     rack_auto_ctrls = [
         ft.Dropdown(
             ref=auto_fill_field_refs[f],
@@ -280,7 +338,7 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                 visible=(f in amp_show_fields),
             )
         else:
-            hint = "0.01-99.99  (must be unique)" if f == "Amp ID" else None
+            hint = "0.01-99.99 with 2 decimals (e.g. 1.00, 42.50)  (must be unique)" if f == "Amp ID" else None
             ctrl = ft.TextField(
                 ref=ref,
                 label=f,
@@ -288,12 +346,32 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                 hint_text=hint,
                 visible=(f in amp_show_fields),
             )
+
+        if f == "Amp ID":
+            def _on_amp_id_blur(e, the_ref=ref):
+                try:
+                    if the_ref.current:
+                        the_ref.current.value = normalize_amp_id(the_ref.current.value)
+                except Exception:
+                    pass
+            ctrl.on_blur = _on_amp_id_blur
+
         amp_ctrls.append(ctrl)
 
+    # Add info about taken IDs so user can easily pick a free one (avoids "duplicate" surprises on create)
+    taken_list = get_taken_amp_ids()
+    taken_info = ft.Text(
+        f"Taken Amp IDs (avoid these): {', '.join(taken_list) if taken_list else 'none yet'}",
+        size=9,
+        italic=True,
+        color=ft.Colors.GREY_700,
+    )
+    amp_ctrls.append(taken_info)
+
     # Visibility groups (toggled when Device Type changes)
-    # rack_only contains template + racktype (visible) + autos (hidden but mounted for auto-populate + collect)
+    # rack_only contains template + racktype (visible) + taken info (visible) + autos (hidden but mounted for auto-populate + collect)
     rack_only = ft.Column(
-        [template_dd, racktype_dd] + rack_auto_ctrls,
+        [template_dd, racktype_dd, taken_rack_text] + rack_auto_ctrls,
         tight=True,
         visible=True,
     )
@@ -315,6 +393,23 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         # values (auto-filled for rack from template, defaults/empty for hidden amp) are collected on Create.
         rack_only.visible = is_rack
         amp_only.visible = not is_rack
+
+        # For amp: if Amp ID field is empty, prefill with a free ID (computed from DB) so user
+        # doesn't pick a taken one and get the "duplicate" error on Create.
+        if not is_rack:
+            amp_id_ctrl = amp_field_refs.get("Amp ID")
+            if amp_id_ctrl and amp_id_ctrl.current:
+                current = (amp_id_ctrl.current.value or "").strip()
+                if not current:
+                    try:
+                        free_id = get_next_free_amp_id()
+                        amp_id_ctrl.current.value = free_id
+                    except Exception:
+                        pass
+
+        if is_rack:
+            _update_rack_suggestion()
+
         # Let rack auto-fill logic run (it safely clears rack autos when switching to Amp)
         try:
             _auto_fill_from_template()

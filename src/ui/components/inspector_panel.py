@@ -10,7 +10,7 @@ This replaces the previous "Edit Selected" panel with a more generic name.
 import flet as ft
 import pandas as pd
 
-from src.core.database import load_from_db, overwrite_data, save_to_db
+from src.core.database import is_amp_id_taken, is_rack_name_taken, load_from_db, overwrite_data, save_to_db
 from src.core.models import (
     AMPLIFIER_FIELDS,
     DataEntry,
@@ -19,6 +19,7 @@ from src.core.models import (
     get_display_name,
     get_fields_for_device,
     get_options_for_field,
+    normalize_amp_id,
 )
 from typing import Any
 from src.ui.theme import (
@@ -96,6 +97,9 @@ def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=
     Renders as Dropdown if the field has options in DEVICE_FIELD_OPTIONS, else TextField.
     Saves on blur / submit (enter/tab) via the provided callback.
     """
+    # Always display Amp IDs with exactly 2 decimal places for consistency (even legacy data)
+    if field_name == "Amp ID":
+        value = normalize_amp_id(value)
     display_value = str(value) if value is not None else ""
 
     label = ft.Text(
@@ -134,6 +138,22 @@ def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=
             focused_border_color=color_scheme.primary,
             content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
         )
+
+        if field_name == "Amp ID":
+            # Auto-normalize to 2 decimals on leave (before the save handler runs)
+            def _wrap_norm(handler):
+                def _wrapped(e):
+                    try:
+                        e.control.value = normalize_amp_id(e.control.value)
+                    except Exception:
+                        pass
+                    if handler:
+                        handler(e)
+                return _wrapped
+            if value_ctrl.on_blur:
+                value_ctrl.on_blur = _wrap_norm(value_ctrl.on_blur)
+            if value_ctrl.on_submit:
+                value_ctrl.on_submit = _wrap_norm(value_ctrl.on_submit)
     else:
         value_ctrl = ft.Text(
             display_value,
@@ -357,10 +377,46 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                 item.properties = {}
             if str(item.properties.get(field_name, "")) == str(new_value or ""):
                 return  # no change
-            item.properties[field_name] = new_value or ""
 
-            # Capture identity *before* any name change, so we can match the correct
-            # DB row even if this edit changes a naming field (which updates .name).
+            old_value = str(item.properties.get(field_name, ""))
+            new_value = new_value or ""
+
+            # Always normalize Amp ID to 2 decimal places before any comparison or storage.
+            # This ensures legacy data like "1" or "1.1" gets canonical "1.00"/"1.10" on next edit,
+            # and user input is always stored consistently.
+            if field_name == "Amp ID" and (getattr(item, "device_type", "") or "").lower() == "amplifier":
+                new_value = normalize_amp_id(new_value)
+
+            if str(item.properties.get(field_name, "")) == new_value:
+                return  # no change (after normalization)
+
+            item.properties[field_name] = new_value
+
+            # Special validation for Amp ID (unique + range), applies on inspector edits too.
+            # This prevents duplicates that the create dialog blocked but edits previously allowed.
+            if field_name == "Amp ID" and (getattr(item, "device_type", "") or "").lower() == "amplifier":
+                amp_id = new_value
+                if amp_id:
+                    try:
+                        val = float(amp_id)
+                        if not (0.01 <= val <= 99.99):
+                            item.properties[field_name] = old_value
+                            show_coming_soon(page, "Amp ID must be a number between 0.01 and 99.99")
+                            _refresh_inspector(app_state)
+                            return
+                    except (ValueError, TypeError):
+                        item.properties[field_name] = old_value
+                        show_coming_soon(page, "Amp ID must be numeric (e.g. 1.01)")
+                        _refresh_inspector(app_state)
+                        return
+
+                    if is_amp_id_taken(amp_id, exclude_id=getattr(item, "id", None)):
+                        item.properties[field_name] = old_value
+                        show_coming_soon(page, f"Amp ID '{amp_id}' is already in use — must be unique.")
+                        _refresh_inspector(app_state)
+                        return
+
+            # Capture identity *before* any name change (for the case of naming fields like Amp ID)
             match_id = getattr(item, 'id', None)
             match_name = getattr(item, 'name', None)
             match_dtype = getattr(item, 'device_type', None)
@@ -374,6 +430,19 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                     item.name = computed_name
             except Exception:
                 pass
+
+            # For racks, after name recompute from naming fields (loc or #), ensure no duplicate name
+            if (getattr(item, "device_type", "") or "").lower() == "rack":
+                proposed_name = item.name
+                if proposed_name and is_rack_name_taken(proposed_name, exclude_id=getattr(item, "id", None)):
+                    item.properties[field_name] = old_value
+                    try:
+                        item.name = get_display_name(item.device_type, item.properties or {})
+                    except Exception:
+                        pass
+                    show_coming_soon(page, f"Cannot use this — it would create duplicate rack name '{proposed_name}' (e.g. never two SL2).")
+                    _refresh_inspector(app_state)
+                    return
 
             try:
                 # Load current state from DB, find the matching item by id (preferred) or name+type,
@@ -448,14 +517,19 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                 # Refresh the inspector too. This makes the header (device: name) update
                 # immediately when a naming field (e.g. Amp ID, Amp Type, Rack Location, Rack #) changes,
                 # and ensures the tab contents reflect the latest data.
-                if hasattr(app_state, "_inspector_refresh_callbacks"):
-                    for cb in list(getattr(app_state, "_inspector_refresh_callbacks", [])):
-                        try:
-                            cb()
-                        except Exception:
-                            pass
+                _refresh_inspector(app_state)
             except Exception as ex:
                 print(f"Save failed for {field_name}: {ex}")
+
+        def _refresh_inspector(app_state):
+            """Rebuild the inspector panel (used after validation errors to revert bad values in UI controls,
+            and on success to update header/name etc.)."""
+            if hasattr(app_state, "_inspector_refresh_callbacks"):
+                for cb in list(getattr(app_state, "_inspector_refresh_callbacks", [])):
+                    try:
+                        cb()
+                    except Exception:
+                        pass
 
         # Icon for the header
         icon = ft.Icons.SETTINGS if device_type.lower() == "rack" else ft.Icons.SPEAKER
