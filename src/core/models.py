@@ -147,34 +147,21 @@ CORE_RACK_FIELDS = [
 ]
 
 AMPLIFIER_FIELDS = [
-    # Assignment fields (used to link Amp to a specific Rack + slot)
-    "Rack Location",     # Filters available racks by location
-    "Rack #",            # Which rack this amp is assigned to
-    "Amp #",             # Physical slot in the rack (Amp # 1-16)
-
-    # Identification
-    "Amp ID",            # Global/Show-level ID (must be unique)
-    "Amp Type",          # D90, D80, D40
-
-    # Operating Mode (affects how channels and hangs behave)
-    "Mode",              # 2-Way Active, Dual Channel, Mix Top/Sub
-
-    # Channels
+    "Rack Location",
+    "Rack #",
+    "Amp #",
+    "Amp Type",
+    "Amp ID",
+    "Mode",
     "Ch A",
     "Ch B",
     "Ch C",
     "Ch D",
-
-    # Hangs
     "Hang A",
     "Hang B",
     "Hang C",
     "Hang D",
-
-    # Patching
     "Output Patch",
-
-    # Connectivity
     "ANA 1",
     "ANA 2",
     "ANA 3",
@@ -238,23 +225,16 @@ DEVICE_FIELD_OPTIONS: dict[str, list[str]] = {
     ],
     "Mode": ["2-Way Active", "Dual Channel", "Mix Top/Sub"],
     "Output Patch": ["LK", "NL8", "NL4"],
-    "Rack Location": ["Stage Right(SR)", "Stage Left(SL)", "Delay(DLY)"],
-    "Rack #": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
-    "Amp #": [
-        "Amp # 1", "Amp # 2", "Amp # 3", "Amp # 4",
-        "Amp # 5", "Amp # 6", "Amp # 7", "Amp # 8",
-        "Amp # 9", "Amp # 10", "Amp # 11", "Amp # 12",
-        "Amp # 13", "Amp # 14", "Amp # 15", "Amp # 16",
-    ],
 
-    # Common / shared fields
+    # Common / shared fields (free text unless options added later)
     "Ch A": [],
     "Ch B": [],
     "Ch C": [],
     "Ch D": [],
-    "Hang C": [],
     "Hang A": [],
-    "Output Patch": [],
+    "Hang B": [],
+    "Hang C": [],
+    "Hang D": [],
     "ANA 1": [],
     "ANA 2": [],
     "ANA 3": [],
@@ -276,6 +256,41 @@ def get_fields_for_device(device: Device | str) -> list[str]:
 def get_options_for_field(field_name: str) -> list[str]:
     """Returns the dropdown options for a specific field (if any are defined)."""
     return DEVICE_FIELD_OPTIONS.get(field_name, [])
+
+
+def get_display_name(device_type: str, properties: dict) -> str:
+    """Compute the canonical display name for a device based on its type and key properties.
+
+    This is used both at creation time and when "naming fields" are edited in the inspector
+    so that the sidebar list and inspector header stay in sync with the data.
+    """
+    dtype = (device_type or "").lower()
+    props = properties or {}
+
+    if dtype == "rack":
+        loc = props.get("Rack Location", "") or ""
+        num = props.get("Rack #", "") or ""
+        import re
+        m = re.search(r'\(([^)]+)\)', loc)
+        pref = m.group(1) if m else "".join(c for c in loc if c.isupper())[:2] or "RACK"
+        num_str = str(num).strip()
+        if num_str:
+            return f"{pref}{num_str}"
+        return pref or "Rack"
+
+    elif dtype == "amplifier":
+        amp_id = str(props.get("Amp ID", "") or "").strip()
+        amp_type = str(props.get("Amp Type", "") or "").strip()
+        if amp_id and amp_type:
+            return f"{amp_id} {amp_type}"
+        if amp_id:
+            return amp_id
+        if amp_type:
+            return amp_type
+        return "Amplifier"
+
+    # Fallback
+    return props.get("name", "") or f"Unnamed {device_type or 'Device'}"
 
 
 # =============================================================================
