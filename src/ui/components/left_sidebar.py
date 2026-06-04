@@ -15,6 +15,7 @@ from src.core.models import (
     DataEntry,
     get_display_name,
     get_options_for_field,
+    get_rack_amp_slots,
     get_rack_name,
     get_rack_template_defaults,
     normalize_amp_id,
@@ -132,108 +133,139 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         try:
             dtype = device_type_ref.current.value or "Rack"
 
-            # Collect common fields first
-            loc = location_ref.current.value or ""
-            num = rack_num_ref.current.value or ""
-
             if dtype == "Rack":
-                # Collect core + auto-fill fields (only meaningful for Rack)
-                props = {
-                    "Rack Location": loc,
-                    "Rack #": num,
-                    "Template": template_ref.current.value or "",
-                    "Rack Type": rack_type_ref.current.value or "",
-                }
-                for f in auto_fill_fields:
-                    if f in auto_fill_field_refs and auto_fill_field_refs[f].current:
-                        props[f] = auto_fill_field_refs[f].current.value or ""
-            else:
-                # Amplifier
-                amp_num = amp_field_refs["Amp #"].current.value or "" if amp_field_refs.get("Amp #") and amp_field_refs["Amp #"].current else ""
-                amp_type = amp_field_refs["Amp Type"].current.value or "" if amp_field_refs.get("Amp Type") and amp_field_refs["Amp Type"].current else ""
-                amp_id = amp_field_refs["Amp ID"].current.value or "" if amp_field_refs.get("Amp ID") and amp_field_refs["Amp ID"].current else ""
-                mode = amp_field_refs["Mode"].current.value or "" if amp_field_refs.get("Mode") and amp_field_refs["Mode"].current else ""
+                # Multi-rack batch collection
+                if not rack_form_rows:
+                    show_coming_soon(page, "No rack rows to create.")
+                    return
+                created_items = []
+                batch_names = set()
+                for idx, row in enumerate(rack_form_rows, 1):
+                    loc = row["loc_dd"].value or ""
+                    num = row["num_dd"].value or ""
+                    t = row["template_dd"].value or ""
+                    rt = row["racktype_dd"].value or ""
+                    props = {
+                        "Rack Location": loc,
+                        "Rack #": num,
+                        "Template": t,
+                        "Rack Type": rt,
+                    }
+                    # auto filled values per row
+                    for f, v in row.get("auto_values", {}).items():
+                        props[f] = v
+                    if "Amp Slots" not in props:
+                        props["Amp Slots"] = str(get_rack_amp_slots(t, rt))
+                    name = get_display_name("Rack", props)
+                    if name in batch_names:
+                        show_coming_soon(page, f"Duplicate rack name '{name}' within this batch (row {idx}).")
+                        return
+                    batch_names.add(name)
+                    if is_rack_name_taken(name):
+                        show_coming_soon(page, f"Rack name '{name}' is already in use (row {idx}).")
+                        return
+                    new_item = DataEntry(
+                        name=name,
+                        device_type="Rack",
+                        properties=props,
+                        notes=""
+                    )
+                    created_items.append(new_item)
 
-                # Normalize Amp ID to always have exactly 2 decimal places (e.g. 1 -> 1.00, 1.1 -> 1.10)
-                amp_id = normalize_amp_id(amp_id)
-                amp_id_ref = amp_field_refs.get("Amp ID")
-                if amp_id_ref and amp_id_ref.current:
+                if created_items:
+                    df = pd.DataFrame([it.to_dict() for it in created_items])
+                    save_to_db(df, "input_data")
+                    print(f"Save successful: {len(created_items)} rack(s)")
+                    if on_created:
+                        on_created()
+                    # trigger inspector refresh (for amp dropdowns etc)
                     try:
-                        amp_id_ref.current.value = amp_id
+                        if hasattr(page, "_app_state"):
+                            as_ = page._app_state
+                            if hasattr(as_, "_inspector_refresh_callbacks"):
+                                for cb in list(getattr(as_, "_inspector_refresh_callbacks", [])):
+                                    try:
+                                        cb()
+                                    except Exception:
+                                        pass
                     except Exception:
                         pass
+                    page.pop_dialog()
+                    page.update()
+                    print("=== CREATE MULTI-RACK SAVE FINISHED ===")
+                    return
+            else:
+                # Multi-amp batch (analogous to multi-rack)
+                if not amp_form_rows:
+                    show_coming_soon(page, "No amp rows to create.")
+                    return
+                created_items = []
+                batch_amp_ids = set()
+                for idx, row in enumerate(amp_form_rows, 1):
+                    loc = row["loc_dd"].value or ""
+                    num = row["num_dd"].value or ""
+                    amp_num = row.get("amp_num_dd").value or "" if row.get("amp_num_dd") else ""
+                    amp_type = row.get("amp_type_dd").value or "" if row.get("amp_type_dd") else ""
+                    amp_id = row.get("amp_id_tf").value or "" if row.get("amp_id_tf") else ""
+                    amp_id = normalize_amp_id(amp_id)
+                    mode = ""  # default; could add per-row mode_dd if desired
 
-                props = {
-                    "Rack Location": loc,
-                    "Rack #": num,
-                    "Amp #": amp_num,
-                    "Amp Type": amp_type,
-                    "Amp ID": amp_id,
-                    "Mode": mode,
-                }
-                for f in amp_fields:
-                    if f in amp_field_refs and amp_field_refs[f].current:
-                        props[f] = amp_field_refs[f].current.value or ""
-
-                # Validate Amp ID: numeric 0.01-99.99 and unique (better UX than before)
-                if amp_id:
-                    try:
-                        val = float(amp_id)
-                        if not (0.01 <= val <= 99.99):
-                            show_coming_soon(page, "Amp ID must be a number between 0.01 and 99.99")
+                    if amp_id:
+                        try:
+                            val = float(amp_id)
+                            if not (0.01 <= val <= 99.99):
+                                show_coming_soon(page, f"Amp ID must be a number between 0.01 and 99.99 (row {idx})")
+                                return
+                        except (ValueError, TypeError):
+                            show_coming_soon(page, f"Amp ID must be numeric (e.g. 1.01) (row {idx})")
                             return
-                    except (ValueError, TypeError):
-                        show_coming_soon(page, "Amp ID must be numeric (e.g. 1.01 or 42.5)")
-                        return
 
-                    if is_amp_id_taken(amp_id):
-                        show_coming_soon(page, f"Amp ID '{amp_id}' is already in use — must be unique.")
-                        return
+                        if amp_id in batch_amp_ids or is_amp_id_taken(amp_id):
+                            show_coming_soon(page, f"Amp ID '{amp_id}' is already in use — must be unique (row {idx}).")
+                            return
+                    batch_amp_ids.add(amp_id)
 
-            # Central name generation (for amps this yields "AmpID AmpType" e.g. "1.01 D90";
-            # for racks it yields the location-pref + rack#)
-            name = get_display_name(dtype, props)
+                    props = {
+                        "Rack Location": loc,
+                        "Rack #": num,
+                        "Amp #": amp_num,
+                        "Amp Type": amp_type,
+                        "Amp ID": amp_id,
+                        "Mode": mode,
+                    }
+                    for f, v in row.get("extra_amp_values", {}).items():
+                        props[f] = v
 
-            # Prevent duplicate rack names (e.g. two SL2) - similar to amp ID uniqueness
-            if dtype == "Rack" and is_rack_name_taken(name):
-                show_coming_soon(page, f"Rack name '{name}' is already in use — must be unique (e.g. never two SL2).")
-                return
+                    name = get_display_name("Amplifier", props)
+                    new_item = DataEntry(
+                        name=name,
+                        device_type="Amplifier",
+                        properties=props,
+                        notes=""
+                    )
+                    created_items.append(new_item)
 
-            print("Generated name:", name)
-            print("Properties being saved:", props)
-
-            new_item = DataEntry(
-                name=name,
-                device_type=dtype,
-                properties=props,
-                notes=""
-            )
-            df = pd.DataFrame([new_item.to_dict()])
-            save_to_db(df, "input_data")
-            print("Save successful")
-
-            if on_created:
-                print("Calling refresh callback...")
-                on_created()
-
-            # After creating an amp, trigger inspector refresh so amp assignment dropdowns
-            # (in rack's Amp Assignments tab) get the latest list of amps from DB.
-            # (Create auto-selects the new amp so inspector shows it; re-select the rack to assign the new amp.)
-            try:
-                if hasattr(page, "_app_state"):
-                    as_ = page._app_state
-                    if hasattr(as_, "_inspector_refresh_callbacks"):
-                        for cb in list(getattr(as_, "_inspector_refresh_callbacks", [])):
-                            try:
-                                cb()
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-
-            page.pop_dialog()
-            page.update()
-            print("=== CREATE SAVE FINISHED ===")
+                if created_items:
+                    df = pd.DataFrame([it.to_dict() for it in created_items])
+                    save_to_db(df, "input_data")
+                    print(f"Save successful: {len(created_items)} amp(s)")
+                    if on_created:
+                        on_created()
+                    try:
+                        if hasattr(page, "_app_state"):
+                            as_ = page._app_state
+                            if hasattr(as_, "_inspector_refresh_callbacks"):
+                                for cb in list(getattr(as_, "_inspector_refresh_callbacks", [])):
+                                    try:
+                                        cb()
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+                    page.pop_dialog()
+                    page.update()
+                    print("=== CREATE MULTI-AMP SAVE FINISHED ===")
+                    return
 
         except Exception as ex:
             import traceback
@@ -383,14 +415,330 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
     )
     amp_ctrls.append(taken_info)
 
+    # === Multi-rack create support (Device Type=Rack) ===
+    # Dynamic growing rows with + button. Each row: Loc, #, Template, Rack Type.
+    # Per-row auto-suggest and template auto-fill (stored in auto_values dict, no extra visible UI for autos).
+    # Batch create + validation (intra-batch + DB rack name uniqueness) handled in _save.
+    rack_form_rows = []  # list of dicts: {'loc_dd':, 'num_dd':, 'template_dd':, 'racktype_dd':, 'auto_values':dict, 'ui':}
+    rack_rows_column = ft.Column(spacing=2, tight=True)
+
+    def _add_rack_row(e=None):
+        """Add a new rack creation row."""
+        row_idx = len(rack_form_rows) + 1
+
+        row_loc = ft.Dropdown(
+            label="Loc",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Location")],
+            height=32,
+            width=125,
+            text_size=10,
+        )
+        row_num = ft.Dropdown(
+            label="#",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack #")],
+            height=32,
+            width=48,
+            text_size=10,
+        )
+        row_t = ft.Dropdown(
+            label="Template",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Template")],
+            height=32,
+            width=58,
+            text_size=10,
+        )
+        row_rt = ft.Dropdown(
+            label="Rack Type",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Type")],
+            height=32,
+            width=68,
+            text_size=10,
+        )
+
+        row_auto_values = {}
+
+        def _row_update_suggestion(e=None, rloc=row_loc, rnum=row_num):
+            loc_val = rloc.value or ""
+            try:
+                current_num = int(rnum.value or 0)
+            except (ValueError, TypeError):
+                current_num = 0
+            if current_num < 1:
+                current_num = 1
+                try:
+                    rnum.value = "1"
+                except Exception:
+                    pass
+            name = get_rack_name(loc_val, current_num)
+            if is_rack_name_taken(name):
+                for n in range(1, 11):
+                    test_name = get_rack_name(loc_val, n)
+                    if not is_rack_name_taken(test_name):
+                        rnum.value = str(n)
+                        break
+            try:
+                rnum.update()
+            except Exception:
+                pass
+
+        row_loc.on_select = _row_update_suggestion
+        row_num.on_select = _row_update_suggestion
+
+        def _row_auto_fill(e=None, rtpl=row_t, rrt=row_rt, rauto=row_auto_values):
+            t = rtpl.value
+            rt = rrt.value
+            if not t or not rt:
+                rauto.clear()
+                return
+            defaults = get_rack_template_defaults(t, rt)
+            rauto.clear()
+            rauto.update(defaults)
+            rauto["Amp Slots"] = str(get_rack_amp_slots(t, rt))
+
+        row_t.on_select = _row_auto_fill
+        row_rt.on_select = _row_auto_fill
+
+        def _remove_row(e=None, rdata=None):
+            if rdata in rack_form_rows and len(rack_form_rows) > 1:
+                rack_form_rows.remove(rdata)
+                if rdata.get("ui") in rack_rows_column.controls:
+                    rack_rows_column.controls.remove(rdata["ui"])
+                try:
+                    rack_rows_column.update()
+                except Exception:
+                    pass
+
+        rem_btn = ft.IconButton(
+            icon=ft.Icons.REMOVE_CIRCLE_OUTLINE,
+            icon_size=13,
+            width=20,
+            height=20,
+            padding=0,
+            tooltip="Remove row",
+            on_click=lambda e, rd=None: _remove_row(e, rd),
+        )
+
+        row_ui = ft.Row(
+            [
+                ft.Text(f"R{row_idx}", size=8, width=16),
+                row_loc,
+                row_num,
+                row_t,
+                row_rt,
+                rem_btn,
+            ],
+            spacing=2,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        row_data = {
+            "loc_dd": row_loc,
+            "num_dd": row_num,
+            "template_dd": row_t,
+            "racktype_dd": row_rt,
+            "auto_values": row_auto_values,
+            "ui": row_ui,
+        }
+        rem_btn.on_click = lambda e, rd=row_data: _remove_row(e, rd)
+
+        rack_form_rows.append(row_data)
+        rack_rows_column.controls.append(row_ui)
+        try:
+            rack_rows_column.update()
+        except Exception:
+            pass
+
+        _row_update_suggestion()
+
+    add_row_btn = ft.IconButton(
+        icon=ft.Icons.ADD_CIRCLE,
+        icon_size=15,
+        width=22,
+        height=22,
+        padding=0,
+        tooltip="Add another rack row",
+        on_click=lambda e: _add_rack_row(),
+    )
+    rack_header = ft.Row(
+        [ft.Text("Create multiple racks at once", size=9, weight=ft.FontWeight.BOLD), add_row_btn],
+        spacing=3,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+    rack_multi = ft.Column(
+        [rack_header, rack_rows_column, taken_rack_text],
+        tight=True,
+        spacing=2,
+        visible=False,
+    )
+
+    # === Multi-amp create support (symmetric to multi-rack, for Device Type=Amplifier) ===
+    # Rows with + . Per-row: Loc, Rack#, Amp#, Amp Type, Amp ID (visible key fields for initial amp create).
+    # Other amp fields default to "" per row.
+    # Per-row free Amp ID prefill (skipping db + current batch rows), normalize on blur.
+    # Batch save with amp id range + uniqueness (batch + db) checks.
+    amp_form_rows = []
+    amp_rows_column = ft.Column(spacing=2, tight=True)
+
+    def _add_amp_row(e=None):
+        row_idx = len(amp_form_rows) + 1
+
+        row_loc = ft.Dropdown(
+            label="Loc",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Location")],
+            height=32,
+            width=125,
+            text_size=10,
+        )
+        row_num = ft.Dropdown(
+            label="#",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack #")],
+            height=32,
+            width=48,
+            text_size=10,
+        )
+        row_amp_num = ft.Dropdown(
+            label="Amp #",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Amp #")],
+            height=32,
+            width=70,
+            text_size=10,
+        )
+        row_amp_type = ft.Dropdown(
+            label="Amp Type",
+            options=[ft.dropdown.Option(o) for o in get_options_for_field("Amp Type")],
+            height=32,
+            width=70,
+            text_size=10,
+        )
+        row_amp_id = ft.TextField(
+            label="Amp ID",
+            height=32,
+            width=70,
+            text_size=10,
+            hint_text="e.g. 1.00 (unique)",
+        )
+
+        row_extra = {f: "" for f in amp_fields if f not in ["Amp #", "Amp Type", "Amp ID"]}
+
+        # include Mode if wanted, but default empty ok; can add row_mode if needed later
+
+        def _normalize_amp_id(e=None, ctrl=row_amp_id):
+            try:
+                ctrl.value = normalize_amp_id(ctrl.value)
+                ctrl.update()
+            except Exception:
+                pass
+        row_amp_id.on_blur = _normalize_amp_id
+
+        def _row_amp_suggest(e=None):
+            # prefill/update free id considering db + other rows
+            pass  # will prefill on add
+
+        # for loc/num/amp_num changes, could re-suggest id, but simple for now
+
+        def _remove_amp_row(e=None, rdata=None):
+            if rdata in amp_form_rows and len(amp_form_rows) > 1:
+                amp_form_rows.remove(rdata)
+                if rdata.get("ui") in amp_rows_column.controls:
+                    amp_rows_column.controls.remove(rdata["ui"])
+                try:
+                    amp_rows_column.update()
+                except Exception:
+                    pass
+
+        rem_btn = ft.IconButton(
+            icon=ft.Icons.REMOVE_CIRCLE_OUTLINE,
+            icon_size=13,
+            width=20,
+            height=20,
+            padding=0,
+            tooltip="Remove row",
+            on_click=lambda e, rd=None: _remove_amp_row(e, rd),
+        )
+
+        row_ui = ft.Row(
+            [
+                ft.Text(f"A{row_idx}", size=8, width=16),
+                row_loc,
+                row_num,
+                row_amp_num,
+                row_amp_type,
+                row_amp_id,
+                rem_btn,
+            ],
+            spacing=2,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        row_data = {
+            "loc_dd": row_loc,
+            "num_dd": row_num,
+            "amp_num_dd": row_amp_num,
+            "amp_type_dd": row_amp_type,
+            "amp_id_tf": row_amp_id,
+            "extra_amp_values": row_extra,
+            "ui": row_ui,
+        }
+        rem_btn.on_click = lambda e, rd=row_data: _remove_amp_row(e, rd)
+
+        amp_form_rows.append(row_data)
+        amp_rows_column.controls.append(row_ui)
+        try:
+            amp_rows_column.update()
+        except Exception:
+            pass
+
+        # prefill next free Amp ID, skipping db + current batch rows
+        try:
+            taken = set(get_taken_amp_ids())
+            for r in amp_form_rows[:-1]:  # previous
+                aid = r.get("amp_id_tf").value or ""
+                if aid:
+                    taken.add(normalize_amp_id(aid))
+            free = get_next_free_amp_id()
+            while free in taken:
+                f = float(free) + 0.01
+                free = f"{f:.2f}"
+            row_amp_id.value = free
+            row_amp_id.update()
+        except Exception:
+            pass
+
+    add_amp_btn = ft.IconButton(
+        icon=ft.Icons.ADD_CIRCLE,
+        icon_size=15,
+        width=22,
+        height=22,
+        padding=0,
+        tooltip="Add another amp row",
+        on_click=lambda e: _add_amp_row(),
+    )
+    amp_header = ft.Row(
+        [ft.Text("Create multiple amps at once", size=9, weight=ft.FontWeight.BOLD), add_amp_btn],
+        spacing=3,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+    # reuse or recreate taken for amps
+    taken_amp_text = ft.Text(
+        f"Taken Amp IDs (avoid these): {', '.join(get_taken_amp_ids()) if get_taken_amp_ids() else 'none yet'}",
+        size=9,
+        italic=True,
+        color=ft.Colors.GREY_700,
+    )
+    amp_multi = ft.Column(
+        [amp_header, amp_rows_column, taken_amp_text],
+        tight=True,
+        spacing=2,
+        visible=False,
+    )
+
     # Visibility groups (toggled when Device Type changes)
-    # rack_only contains template + racktype (visible) + taken info (visible) + autos (hidden but mounted for auto-populate + collect)
+    # rack_only / amp_only kept for fallback if needed; we use *multi for both now.
     rack_only = ft.Column(
         [template_dd, racktype_dd, taken_rack_text] + rack_auto_ctrls,
         tight=True,
         visible=True,
     )
-    # amp_only contains all amp fields; only Amp Type + Amp ID have visible=True (others hidden but mounted)
     amp_only = ft.Column(
         amp_ctrls,
         tight=True,
@@ -402,34 +750,27 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         dtype_ctrl = device_type_ref.current
         dtype = getattr(dtype_ctrl, "value", None) if dtype_ctrl else "Rack"
         is_rack = (dtype == "Rack")
-        # For Rack: show loc, rack#, template, rack type (autos after rack type are hidden individually but still mounted for auto-fill + save).
-        # For Amplifier: show loc, rack# (for assignment) + only Amp Type and Amp ID (per request); hide all other amp fields.
-        # Hidden controls are still mounted in the tree when their group is visible, so refs populate and
-        # values (auto-filled for rack from template, defaults/empty for hidden amp) are collected on Create.
-        rack_only.visible = is_rack
-        amp_only.visible = not is_rack
-
-        # For amp: if Amp ID field is empty, prefill with a free ID (computed from DB) so user
-        # doesn't pick a taken one and get the "duplicate" error on Create.
-        if not is_rack:
-            amp_id_ctrl = amp_field_refs.get("Amp ID")
-            if amp_id_ctrl and amp_id_ctrl.current:
-                current = (amp_id_ctrl.current.value or "").strip()
-                if not current:
-                    try:
-                        free_id = get_next_free_amp_id()
-                        amp_id_ctrl.current.value = free_id
-                    except Exception:
-                        pass
+        # For both: use respective multi-row areas. Top level loc/rack_dd hidden (now per-row).
+        loc_dd.visible = False
+        rack_dd.visible = False
+        rack_multi.visible = is_rack
+        amp_multi.visible = not is_rack
+        rack_only.visible = False
+        amp_only.visible = False
 
         if is_rack:
-            _update_rack_suggestion()
+            if len(rack_form_rows) == 0:
+                _add_rack_row()
+        else:
+            if len(amp_form_rows) == 0:
+                _add_amp_row()
+            # prefill logic for amp id already in _add_amp_row
 
-        # Let rack auto-fill logic run (it safely clears rack autos when switching to Amp)
+        # Let auto-fill run for rack (harmless for amp)
         try:
             _auto_fill_from_template()
-            rack_only.update()
-            amp_only.update()
+            rack_multi.update()
+            amp_multi.update()
         except Exception:
             pass
 
@@ -452,7 +793,9 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                 device_type_dd,
                 loc_dd,
                 rack_dd,
-                rack_only,
+                rack_multi,   # multi-rack rows (visible when Device=Rack)
+                amp_multi,    # multi-amp rows (visible when Device=Amplifier)
+                rack_only,    # fallback
                 amp_only,
             ],
             tight=True,

@@ -350,6 +350,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "LK",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 16,
     },
     ("D90", "223"): {
         "Switch Config": "Redundant",
@@ -368,6 +369,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "LK",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 16,
     },
     ("D90", "117"): {
         "Switch Config": "Redundant",
@@ -386,6 +388,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 6,
     },
     ("D90", "112"): {
         "Switch Config": "Redundant",
@@ -404,6 +407,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 4,
     },
     ("D90", "112(AIS)"): {
         "Switch Config": "Redundant",
@@ -422,6 +426,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 4,
     },
     # D80 Templates
     ("D80", "224"): {
@@ -441,6 +446,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "LK",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 16,
     },
     ("D80", "223"): {
         "Switch Config": "Primary Only",
@@ -459,6 +465,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "LK",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 16,
     },
     ("D80", "117"): {
         "Switch Config": "Primary Only",
@@ -477,6 +484,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 6,
     },
     ("D80", "112"): {
         "Switch Config": "Primary Only",
@@ -495,6 +503,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 4,
     },
     ("D80", "112(AIS)"): {
         "Switch Config": "Primary Only",
@@ -513,6 +522,7 @@ RACK_TEMPLATE_DEFAULTS = {
         "Maps 4": "",
         "Maps 5": "",
         "Maps 6": "",
+        "Amp Slots": 4,
     },
 }
 
@@ -520,3 +530,16 @@ RACK_TEMPLATE_DEFAULTS = {
 def get_rack_template_defaults(template: str, rack_type: str) -> dict:
     """Returns the default values for a given Template + Rack Type combination."""
     return RACK_TEMPLATE_DEFAULTS.get((template, rack_type), {}).copy()
+
+
+def get_rack_amp_slots(template: str, rack_type: str) -> int:
+    """Return the number of amplifier slots (Amp # 1 .. N) for the given Template + Rack Type.
+    Falls back to 16 if unknown combination. Used to dynamically limit the Amp Assignments
+    shown/available for a rack, and to auto-clear excess slots when Template/Rack Type changes.
+    """
+    defaults = RACK_TEMPLATE_DEFAULTS.get((template or "", rack_type or ""), {})
+    try:
+        n = int(defaults.get("Amp Slots", 16))
+        return max(1, min(16, n))
+    except (ValueError, TypeError):
+        return 16

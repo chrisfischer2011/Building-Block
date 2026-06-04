@@ -19,7 +19,9 @@ from src.core.models import (
     get_display_name,
     get_fields_for_device,
     get_options_for_field,
+    get_rack_amp_slots,
     get_rack_name,
+    get_rack_template_defaults,
     normalize_amp_id,
 )
 from typing import Any
@@ -55,7 +57,7 @@ RACK_TAB_SIGNAL = [
     "Maps 1", "Maps 2", "Maps 3", "Maps 4", "Maps 5", "Maps 6",
 ]
 
-RACK_TAB_AMPS = [f"Amp # {i}" for i in range(1, 17)]
+RACK_TAB_AMPS = [f"Amp # {i}" for i in range(1, 17)]  # maximum; per-rack visible count is dynamic (see get_rack_amp_slots + _get_rack_amp_assignment_fields) based on Template + Rack Type "Amp Slots" from the templates table
 
 RACK_TAB_1U = ["1u A", "1u B"]
 
@@ -77,6 +79,96 @@ def _get_amp_options() -> list[str]:
         return sorted(options)
     except Exception:
         return []
+
+
+def _get_rack_amp_assignment_fields(props: dict) -> list[str]:
+    """Return the list of Amp # slots to show for this rack (e.g. Amp # 1 .. Amp # 6),
+    based on its current Template + Rack Type lookup. Always <= 16.
+    Used to dynamically limit the Amp Assignments tab UI.
+    """
+    template = props.get("Template", "") or ""
+    rack_type = props.get("Rack Type", "") or ""
+    n = get_rack_amp_slots(template, rack_type)
+    return [f"Amp # {i}" for i in range(1, n + 1)]
+
+
+def _get_available_rack_locations() -> list[str]:
+    """Return Rack Location values that actually exist for at least one Rack in the DB.
+    Used to filter the dropdown when editing an Amplifier's Rack Location.
+    """
+    try:
+        df = load_from_db("input_data")
+        locs = set()
+        for _, row in df.iterrows():
+            if str(row.get("device_type", "")).lower() != "rack":
+                continue
+            it = DataEntry.from_dict(row)
+            if it and it.properties:
+                loc = (it.properties.get("Rack Location", "") or "").strip()
+                if loc:
+                    locs.add(loc)
+        if locs:
+            # Try to keep preferred order from static options
+            preferred = get_options_for_field("Rack Location")
+            ordered = [p for p in preferred if p in locs]
+            ordered += [l for l in sorted(locs) if l not in ordered]
+            return ordered
+        return get_options_for_field("Rack Location")
+    except Exception:
+        return get_options_for_field("Rack Location")
+
+
+def _get_available_rack_numbers(location: str = None) -> list[str]:
+    """Return Rack # values for existing racks. If location is given, only those for that location.
+    Used to filter the dropdown when editing an Amplifier's Rack # (cascading on current Rack Location).
+    """
+    try:
+        df = load_from_db("input_data")
+        nums = set()
+        for _, row in df.iterrows():
+            if str(row.get("device_type", "")).lower() != "rack":
+                continue
+            it = DataEntry.from_dict(row)
+            if it and it.properties:
+                if location and (it.properties.get("Rack Location", "") or "").strip() != location.strip():
+                    continue
+                num = (it.properties.get("Rack #", "") or "").strip()
+                if num:
+                    nums.add(num)
+        if nums:
+            preferred = get_options_for_field("Rack #")
+            ordered = [p for p in preferred if p in nums]
+            ordered += [n for n in sorted(nums, key=lambda x: int(x) if str(x).isdigit() else 999) if n not in ordered]
+            return ordered
+        return get_options_for_field("Rack #")
+    except Exception:
+        return get_options_for_field("Rack #")
+
+
+def _get_available_amp_slots_for_rack(location: str, rack_number: str) -> list[str]:
+    """For the rack identified by Rack Location + Rack # (if it exists), return Amp # 1 .. N
+    where N comes from that rack's Template + Rack Type (Amp Slots in the template table).
+    If no matching rack or unknown, falls back to 1-16.
+    Used to filter the Amp # dropdown on an Amplifier to only the slots the target rack supports.
+    """
+    if not location or not rack_number:
+        return [f"Amp # {i}" for i in range(1, 17)]
+    try:
+        df = load_from_db("input_data")
+        for _, row in df.iterrows():
+            if str(row.get("device_type", "")).lower() != "rack":
+                continue
+            it = DataEntry.from_dict(row)
+            if it and it.properties:
+                if (it.properties.get("Rack Location", "") or "").strip() == location.strip() and \
+                   (it.properties.get("Rack #", "") or "").strip() == str(rack_number).strip():
+                    t = it.properties.get("Template", "") or ""
+                    rt = it.properties.get("Rack Type", "") or ""
+                    n = get_rack_amp_slots(t, rt)
+                    return [f"Amp # {i}" for i in range(1, n + 1)]
+        return [f"Amp # {i}" for i in range(1, 17)]
+    except Exception:
+        return [f"Amp # {i}" for i in range(1, 17)]
 
 # =============================================================================
 # Tab definitions for Amplifier Inspector (user-specified grouping)
@@ -112,7 +204,7 @@ AMP_TAB_INPUT = [
 ]
 
 
-def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=None) -> ft.Container:
+def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, on_value_changed=None, device_type: str = None) -> ft.Container:
     """Compact visual tile for a single Rack attribute (label on top, value below).
     Renders as Dropdown if the field has options in DEVICE_FIELD_OPTIONS, else TextField.
     Saves on blur / submit (enter/tab) via the provided callback.
@@ -136,6 +228,21 @@ def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=
     # Prepend "" so user can manually clear a single slot via dropdown if desired (primary unassign is rack-level + global).
     if field_name.startswith("Amp # "):
         options = [""] + _get_amp_options()
+
+    # Special dynamic filtering for *Amplifier* assignment fields (Rack Location, Rack #, Amp #).
+    # Only offer values corresponding to real existing Racks, and for Amp # only the number of
+    # slots supported by the specific target rack (per its Template + Rack Type "Amp Slots").
+    # This is computed from current props at render time so lists are "available" and cascading.
+    if device_type and str(device_type).lower() == "amplifier" and field_name in ("Rack Location", "Rack #", "Amp #"):
+        if field_name == "Rack Location":
+            options = _get_available_rack_locations()
+        elif field_name == "Rack #":
+            cur_loc = (all_props or {}).get("Rack Location", "") if all_props else ""
+            options = _get_available_rack_numbers(cur_loc)
+        elif field_name == "Amp #":
+            cur_loc = (all_props or {}).get("Rack Location", "") if all_props else ""
+            cur_num = (all_props or {}).get("Rack #", "") if all_props else ""
+            options = _get_available_amp_slots_for_rack(cur_loc, cur_num)
 
     if on_value_changed and options:
         if field_name.startswith("Amp # "):
@@ -228,7 +335,7 @@ def _attribute_tile(field_name: str, value: Any, color_scheme, on_value_changed=
     )
 
 
-def _build_tab_content(field_names: list[str], props: dict, color_scheme, on_value_changed=None) -> ft.Container:
+def _build_tab_content(field_names: list[str], props: dict, color_scheme, on_value_changed=None, device_type: str = None) -> ft.Container:
     """Builds scrollable tab content using compact tiles for the Rack inspector."""
     if not field_names:
         return ft.Container(
@@ -236,7 +343,7 @@ def _build_tab_content(field_names: list[str], props: dict, color_scheme, on_val
             padding=10,
         )
 
-    tiles = [_attribute_tile(name, props.get(name, ""), color_scheme, on_value_changed=on_value_changed) for name in field_names]
+    tiles = [_attribute_tile(name, props.get(name, ""), props, color_scheme, on_value_changed=on_value_changed, device_type=device_type) for name in field_names]
 
     # Wrap the tiles row in a scrollable Column for better behavior inside Tabs
     return ft.Container(
@@ -492,6 +599,51 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
             if (getattr(item, "device_type", "") or "").lower() == "amplifier" and match_name and item.name and match_name != item.name:
                 name_changed = True
 
+            is_rack_edit = (getattr(item, "device_type", "") or "").lower() == "rack"
+            is_amp_edit = (getattr(item, "device_type", "") or "").lower() == "amplifier"
+
+            # Auto-apply template defaults (signal routing etc.) + reduce amp slots when Template or Rack Type changed on a rack.
+            # This makes the Amp Assignments tab (and other fields) update automatically.
+            # Excess Amp # slots beyond the new count are cleared on the rack and their amps are unassigned.
+            pre_higher_amp_slots: dict[str, str] = {}
+            if is_rack_edit and field_name in ["Template", "Rack Type"]:
+                t = item.properties.get("Template", "") or ""
+                rt = item.properties.get("Rack Type", "") or ""
+                defaults = get_rack_template_defaults(t, rt)
+                for k, v in defaults.items():
+                    if k != "Amp Slots":
+                        item.properties[k] = v
+                n = get_rack_amp_slots(t, rt)
+                for i in range(n + 1, 17):
+                    sl = f"Amp # {i}"
+                    val = (item.properties.get(sl, "") or "").strip()
+                    if val:
+                        pre_higher_amp_slots[sl] = val
+                        item.properties[sl] = ""
+                item.properties["Amp Slots"] = str(n)
+                print(f"[DEBUG] Template/Rack Type changed -> auto-filled signals, amp slots now {n}, cleared {len(pre_higher_amp_slots)} excess slot(s)")
+
+            # For Amplifier: when changing Rack Location or Rack #, auto-clear dependent fields
+            # if they are no longer valid for the new choice (keeps data consistent, and next render
+            # of the other dropdowns will offer only available options).
+            if is_amp_edit and field_name in ("Rack Location", "Rack #"):
+                if field_name == "Rack Location":
+                    new_loc = item.properties.get("Rack Location", "")
+                    cur_num = item.properties.get("Rack #", "")
+                    avail_nums = _get_available_rack_numbers(new_loc)
+                    if cur_num and cur_num not in [str(x) for x in avail_nums]:
+                        item.properties["Rack #"] = ""
+                        item.properties["Amp #"] = ""
+                        print(f"[DEBUG] Amp: cleared Rack # / Amp # because '{cur_num}' not available for new loc '{new_loc}'")
+                elif field_name == "Rack #":
+                    cur_loc = item.properties.get("Rack Location", "")
+                    new_num = item.properties.get("Rack #", "")
+                    avail_slots = _get_available_amp_slots_for_rack(cur_loc, new_num)
+                    cur_slot = item.properties.get("Amp #", "")
+                    if cur_slot and cur_slot not in avail_slots:
+                        item.properties["Amp #"] = ""
+                        print(f"[DEBUG] Amp: cleared Amp # because '{cur_slot}' not available for rack {cur_loc} / {new_num}")
+
             try:
                 # Load current state from DB, find the matching item by id (preferred) or name+type,
                 # update it in place (including recomputed name), then overwrite the whole table.
@@ -536,9 +688,7 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                 # Rack assignment now moves an amp if it's assigned elsewhere (instead of blocking).
                 # This keeps rack slots and amp "Rack Location/Rack #/Amp #" in sync in both directions.
 
-                is_rack_edit = (getattr(item, "device_type", "") or "").lower() == "rack"
-                is_amp_edit = (getattr(item, "device_type", "") or "").lower() == "amplifier"
-                amp_slots = [f"Amp # {i}" for i in range(1, 17)]
+                amp_slots = RACK_TAB_AMPS
 
                 # --- Name propagation for amps (if Amp ID/Type changed, update rack slot strings) ---
                 if name_changed and match_name and item.name:
@@ -634,6 +784,18 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                         # Clearing this slot (new_amp == ""): the old occupant unassign above already did the work.
                         print(f"[DEBUG] Amp slot {field_name} cleared on rack (unassign propagated if there was an occupant)")
 
+                # Handle excess amp slot unassigns when Template or Rack Type changed (reduces visible assignments)
+                if is_rack_edit and field_name in ["Template", "Rack Type"] and pre_higher_amp_slots:
+                    for sl, amp_name in pre_higher_amp_slots.items():
+                        for it in items:
+                            if it and (getattr(it, "device_type", "") or "").lower() == "amplifier" and (getattr(it, "name", "") or "").strip() == amp_name:
+                                it.properties = it.properties or {}
+                                it.properties["Rack Location"] = ""
+                                it.properties["Rack #"] = ""
+                                it.properties["Amp #"] = ""
+                                print(f"[DEBUG] Template/Rack Type change: unassigned '{amp_name}' from now-excess {sl}")
+                                break
+
                 # --- Reverse: amp's Rack Location / Rack # / Amp # edited ---
                 # The amp declares where it belongs. Make rack side(s) match: clear from old location(s),
                 # set the (possibly new) slot on the target rack if loc+#+slot are all provided.
@@ -712,15 +874,15 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                 if _tab_state.get("contents") and _tab_state.get("area"):
                     try:
                         if _tab_state.get("is_rack"):
-                            c0 = _build_tab_content(RACK_TAB_CORE, item.properties or {}, color_scheme, on_value_changed=_save_field)
-                            c1 = _build_tab_content(RACK_TAB_SIGNAL, item.properties or {}, color_scheme, on_value_changed=_save_field)
-                            c2f = RACK_TAB_AMPS + RACK_TAB_1U
-                            c2 = _build_tab_content(c2f, item.properties or {}, color_scheme, on_value_changed=_save_field)
+                            c0 = _build_tab_content(RACK_TAB_CORE, item.properties or {}, color_scheme, on_value_changed=_save_field, device_type="Rack")
+                            c1 = _build_tab_content(RACK_TAB_SIGNAL, item.properties or {}, color_scheme, on_value_changed=_save_field, device_type="Rack")
+                            c2f = _get_rack_amp_assignment_fields(item.properties or {}) + RACK_TAB_1U
+                            c2 = _build_tab_content(c2f, item.properties or {}, color_scheme, on_value_changed=_save_field, device_type="Rack")
                             _tab_state["contents"][:] = [c0, c1, c2]
                         else:
-                            c0 = _build_tab_content(AMP_TAB_CORE, item.properties or {}, color_scheme, on_value_changed=_save_field)
-                            c1 = _build_tab_content(AMP_TAB_OUTPUT, item.properties or {}, color_scheme, on_value_changed=_save_field)
-                            c2 = _build_tab_content(AMP_TAB_INPUT, item.properties or {}, color_scheme, on_value_changed=_save_field)
+                            c0 = _build_tab_content(AMP_TAB_CORE, item.properties or {}, color_scheme, on_value_changed=_save_field, device_type="Amplifier")
+                            c1 = _build_tab_content(AMP_TAB_OUTPUT, item.properties or {}, color_scheme, on_value_changed=_save_field, device_type="Amplifier")
+                            c2 = _build_tab_content(AMP_TAB_INPUT, item.properties or {}, color_scheme, on_value_changed=_save_field, device_type="Amplifier")
                             _tab_state["contents"][:] = [c0, c1, c2]
                         _tab_state["area"].content = _tab_state["contents"][_tab_state["selected"][0]]
                         _tab_state["area"].update()
@@ -854,13 +1016,14 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
         if device_type.lower() == "rack":
             # === Clean compact header with tabs integrated in the row + underline ===
             # Tabs: Core | Signal Routing | Amp Assignments (1U fields inline in 3rd tab)
-            core_content = _build_tab_content(RACK_TAB_CORE, props, color_scheme, on_value_changed=_save_field)
-            signal_content = _build_tab_content(RACK_TAB_SIGNAL, props, color_scheme, on_value_changed=_save_field)
+            core_content = _build_tab_content(RACK_TAB_CORE, props, color_scheme, on_value_changed=_save_field, device_type="Rack")
+            signal_content = _build_tab_content(RACK_TAB_SIGNAL, props, color_scheme, on_value_changed=_save_field, device_type="Rack")
 
             # 3rd tab: Amp Assignments + 1U Custom fields all in one flat wrapped grid
             # (so the 2 1U fields appear inline with the other Amp fields)
+            # Number of Amp # slots is dynamic based on Template + Rack Type (from amp rack templates table).
             # Unassign button for the entire rack (not per-slot) as requested.
-            third_tab_fields = RACK_TAB_AMPS + RACK_TAB_1U
+            third_tab_fields = _get_rack_amp_assignment_fields(props) + RACK_TAB_1U
 
             def _unassign_all_for_this_rack(e):
                 """Clear all Amp # 1..16 slots on the current rack and sync-unassign the amps (clear their 3 fields).
@@ -869,8 +1032,11 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                 if not app_state.selected_item or (getattr(app_state.selected_item, "device_type", "") or "").lower() != "rack":
                     return
                 rk = app_state.selected_item
+                # Only unassign the slots that are currently active for this rack's template (plus any legacy higher just in case)
+                n = get_rack_amp_slots(rk.properties.get("Template", ""), rk.properties.get("Rack Type", ""))
+                slots_to_clear = [f"Amp # {i}" for i in range(1, n + 1)] + [f"Amp # {i}" for i in range(n + 1, 17)]
                 assigned = []
-                for sl in RACK_TAB_AMPS:
+                for sl in slots_to_clear:
                     val = (rk.properties.get(sl, "") or "").strip()
                     if val:
                         assigned.append(val)
@@ -936,7 +1102,7 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
 
-            base_tiles = _build_tab_content(third_tab_fields, props, color_scheme, on_value_changed=_save_field)
+            base_tiles = _build_tab_content(third_tab_fields, props, color_scheme, on_value_changed=_save_field, device_type="Rack")
             third_tab_content = ft.Container(
                 content=ft.Column(
                     [
@@ -966,9 +1132,9 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
             # Core: assignment + identity + mode
             # Output: patching + channels + hangs
             # Input: analog + aes
-            core_content = _build_tab_content(AMP_TAB_CORE, props, color_scheme, on_value_changed=_save_field)
-            output_content = _build_tab_content(AMP_TAB_OUTPUT, props, color_scheme, on_value_changed=_save_field)
-            input_content = _build_tab_content(AMP_TAB_INPUT, props, color_scheme, on_value_changed=_save_field)
+            core_content = _build_tab_content(AMP_TAB_CORE, props, color_scheme, on_value_changed=_save_field, device_type="Amplifier")
+            output_content = _build_tab_content(AMP_TAB_OUTPUT, props, color_scheme, on_value_changed=_save_field, device_type="Amplifier")
+            input_content = _build_tab_content(AMP_TAB_INPUT, props, color_scheme, on_value_changed=_save_field, device_type="Amplifier")
 
             tab_contents = [core_content, output_content, input_content]
             tab_labels = ["Core", "Output", "Input"]
