@@ -310,14 +310,22 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         ref=location_ref,
         label="Rack Location",
         options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Location")],
-        height=50,
+        dense=True,
+        height=40,
+        content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+        text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
+        label_style=ft.TextStyle(color=ft.Colors.BLACK, size=9),
         on_select=_update_rack_suggestion,
     )
     rack_dd = ft.Dropdown(
         ref=rack_num_ref,
         label="Rack #",
         options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack #")],
-        height=50,
+        dense=True,
+        height=40,
+        content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+        text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
+        label_style=ft.TextStyle(color=ft.Colors.BLACK, size=9),
         on_select=_update_rack_suggestion,
     )
 
@@ -329,14 +337,22 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         ref=template_ref,
         label="Template",
         options=[ft.dropdown.Option(o) for o in get_options_for_field("Template")],
-        height=50,
+        dense=True,
+        height=40,
+        content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+        text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
+        label_style=ft.TextStyle(color=ft.Colors.BLACK, size=9),
         on_select=_auto_fill_from_template,
     )
     racktype_dd = ft.Dropdown(
         ref=rack_type_ref,
         label="Rack Type",
         options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Type")],
-        height=50,
+        dense=True,
+        height=40,
+        content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+        text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
+        label_style=ft.TextStyle(color=ft.Colors.BLACK, size=9),
         on_select=_auto_fill_from_template,
     )
 
@@ -346,7 +362,7 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         f"Taken Rack names (never duplicate e.g. 2 SL2): {', '.join(sorted(taken_rack_names)) if taken_rack_names else 'none yet'}",
         size=9,
         italic=True,
-        color=ft.Colors.GREY_700,
+        color=ft.Colors.BLACK,
     )
 
     rack_auto_ctrls = [
@@ -354,7 +370,11 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             ref=auto_fill_field_refs[f],
             label=f,
             options=[ft.dropdown.Option(o) for o in get_options_for_field(f)],
-            height=50,
+            dense=True,
+            height=40,
+            content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
+            label_style=ft.TextStyle(color=ft.Colors.BLACK, size=9),
         )
         for f in auto_fill_fields
     ]
@@ -370,7 +390,7 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
     # All others are hidden (still created so refs get mounted when group shown, values collected on Create as empty/defaults;
     # user fills the rest later in the Inspector).
     amp_ctrls = [
-        ft.Text("Amplifier Details", size=11, weight=ft.FontWeight.BOLD, visible=False),
+        ft.Text("Amplifier Details", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, visible=False),
     ]
     amp_show_fields = {"Amp Type", "Amp ID"}
     for f in amp_fields:
@@ -381,7 +401,11 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
                 ref=ref,
                 label=f,
                 options=[ft.dropdown.Option(o) for o in opts],
-                height=50,
+                dense=True,
+                height=40,
+                content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+                text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
+                label_style=ft.TextStyle(color=ft.Colors.BLACK, size=9),
                 visible=(f in amp_show_fields),
             )
         else:
@@ -389,8 +413,11 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             ctrl = ft.TextField(
                 ref=ref,
                 label=f,
-                height=50,
+                dense=True,
+                height=40,
                 hint_text=hint,
+                content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+                text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
                 visible=(f in amp_show_fields),
             )
 
@@ -411,7 +438,7 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         f"Taken Amp IDs (avoid these): {', '.join(taken_list) if taken_list else 'none yet'}",
         size=9,
         italic=True,
-        color=ft.Colors.GREY_700,
+        color=ft.Colors.BLACK,
     )
     amp_ctrls.append(taken_info)
 
@@ -420,39 +447,50 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
     # Per-row auto-suggest and template auto-fill (stored in auto_values dict, no extra visible UI for autos).
     # Batch create + validation (intra-batch + DB rack name uniqueness) handled in _save.
     rack_form_rows = []  # list of dicts: {'loc_dd':, 'num_dd':, 'template_dd':, 'racktype_dd':, 'auto_values':dict, 'ui':}
-    rack_rows_column = ft.Column(spacing=2, tight=True)
+    # Using ListView (instead of Column+scroll) for more stable stacking of fixed-height row wrappers on dynamic + appends.
+    # spacing=4 + faint purple viewport bg creates visible separator strips between the colored row slots (borders won't touch).
+    # Inside each slot: inner Container(alignment=CENTER) + its padding for proper vertical centering of the row inside the fixed slot (no spacer clipping). Row vertical align only for internal items. Outer height=60 is the slot size.
+    rack_rows_column = ft.ListView(controls=[], spacing=4, auto_scroll=True, expand=False)
 
     def _add_rack_row(e=None):
         """Add a new rack creation row."""
         row_idx = len(rack_form_rows) + 1
 
         row_loc = ft.Dropdown(
-            label="Loc",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Location")],
-            height=32,
-            width=125,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=180,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
         row_num = ft.Dropdown(
-            label="#",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack #")],
-            height=32,
-            width=48,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=120,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
         row_t = ft.Dropdown(
-            label="Template",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Template")],
-            height=32,
-            width=58,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=90,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
         row_rt = ft.Dropdown(
-            label="Rack Type",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Type")],
-            height=32,
-            width=68,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=100,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
 
         row_auto_values = {}
@@ -500,13 +538,16 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
 
         def _remove_row(e=None, rdata=None):
             if rdata in rack_form_rows and len(rack_form_rows) > 1:
+                print(f"[DEBUG REMOVE RACK] removing, before len={len(rack_form_rows)}")
                 rack_form_rows.remove(rdata)
                 if rdata.get("ui") in rack_rows_column.controls:
                     rack_rows_column.controls.remove(rdata["ui"])
                 try:
                     rack_rows_column.update()
+                    rack_rows_viewport.update()
                 except Exception:
                     pass
+                print(f"[DEBUG REMOVE RACK] after len={len(rack_form_rows)}")
 
         rem_btn = ft.IconButton(
             icon=ft.Icons.REMOVE_CIRCLE_OUTLINE,
@@ -531,23 +572,59 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+        # Removed vertical padding from row_content (as requested: no extra vertical padding/margins around the dropdowns).
+        # The dropdown boxes size purely from height=28 + row_ui's vertical_alignment=CENTER (for prefix/rem_btn alignment).
+        row_content = ft.Container(
+            content=row_ui,
+            padding=ft.Padding.symmetric(horizontal=2, vertical=0),
+        )
+
+        # Better centering inside the fixed-height colored slot (row_wrapper):
+        # The inner Container uses alignment=ft.Alignment.CENTER so the row is vertically (and horizontally) centered
+        # within the outer fixed height. The padding on this inner container creates the visible colored "gap"/margin
+        # around the row *inside* the black border of the frame. Symmetric vertical padding gives even space top+bottom.
+        # This avoids the old spacer overflow/clipping problem and ensures proper vertical centering inside the slot.
+        # The outer height=60 (user's value) enforces consistent row slots so adding more rows via + doesn't cause overlap.
+        # Tune the vertical padding value (currently 6) for more/less internal gap. Or change outer height if you want
+        # denser or taller row slots overall.
+        debug_colors = [ft.Colors.RED, ft.Colors.BLUE, ft.Colors.GREEN, ft.Colors.AMBER, ft.Colors.PURPLE, ft.Colors.CYAN]
+        dbg_color = ft.Colors.with_opacity(0.22, debug_colors[(row_idx-1) % len(debug_colors)])
+        row_wrapper = ft.Container(
+            content=ft.Container(
+                content=row_content,
+                alignment=ft.Alignment.CENTER,
+                padding=ft.Padding.symmetric(horizontal=2, vertical=6),
+            ),
+            height=60,
+            bgcolor=dbg_color,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+                top=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+                right=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+                bottom=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+            ),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
+
         row_data = {
             "loc_dd": row_loc,
             "num_dd": row_num,
             "template_dd": row_t,
             "racktype_dd": row_rt,
             "auto_values": row_auto_values,
-            "ui": row_ui,
+            "ui": row_wrapper,
         }
         rem_btn.on_click = lambda e, rd=row_data: _remove_row(e, rd)
 
         rack_form_rows.append(row_data)
-        rack_rows_column.controls.append(row_ui)
+        rack_rows_column.controls.append(row_wrapper)
         try:
             rack_rows_column.update()
+            rack_rows_viewport.update()
         except Exception:
             pass
 
+        print(f"[DEBUG ADD RACK] added row_idx={row_idx}, now total rack_form_rows={len(rack_form_rows)}")
         _row_update_suggestion()
 
     add_row_btn = ft.IconButton(
@@ -559,16 +636,64 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         tooltip="Add another rack row",
         on_click=lambda e: _add_rack_row(),
     )
-    rack_header = ft.Row(
-        [ft.Text("Create multiple racks at once", size=9, weight=ft.FontWeight.BOLD), add_row_btn],
-        spacing=3,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    # DEBUG wrapper: Row itself can't take bgcolor, so wrap for the subtle header tint.
+    rack_header = ft.Container(
+        content=ft.Row(
+            [ft.Text("Create multiple racks at once", size=9, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK), add_row_btn],
+            spacing=3,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.GREY),
+        padding=2,
+    )
+
+    # One-time compact labels row (no per-dd `label` on data rows to keep each row short/not tall)
+    # DEBUG wrapper (Row can't take bgcolor/border directly)
+    rack_labels_row = ft.Container(
+        content=ft.Row(
+            [
+                ft.Text("", width=16),
+                ft.Text("Loc", size=9, width=180, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+                ft.Text("#", size=9, width=120, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+                ft.Text("Template", size=9, width=90, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+                ft.Text("Rack Type", size=9, width=100, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+            ],
+            spacing=1,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.YELLOW),
+        border=ft.Border(
+            left=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+            top=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+            right=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+            bottom=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+        ),
+        padding=2,
+    )
+
+    # Fixed height viewport for the rows list. DEBUG border (purple) + faint purple bg frames the list of colored row slots.
+    # The faint bg makes the 4px spacing gaps appear as clear tinted strips separating the red/blue/etc frames. (Debug only)
+    # Each slot uses inner Container(alignment=CENTER) + padding for even vertical centering/gap inside the colored frame. Outer height=60 is the fixed slot.
+    rack_rows_viewport = ft.Container(
+        content=rack_rows_column,
+        height=300,
+        expand=False,
+        border=ft.Border(
+            left=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+            top=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+            right=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+            bottom=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+        ),
+        padding=2,
+        # Very faint purple bg so the spacing gaps between colored row frames are easy to see as separator strips.
+        bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.PURPLE),
     )
     rack_multi = ft.Column(
-        [rack_header, rack_rows_column, taken_rack_text],
+        [rack_header, rack_labels_row, rack_rows_viewport, taken_rack_text],
         tight=True,
         spacing=2,
         visible=False,
+        # (outer debug border removed — Row/Column don't accept it directly; the per-row colored bands + purple viewport border provide the visual)
     )
 
     # === Multi-amp create support (symmetric to multi-rack, for Device Type=Amplifier) ===
@@ -577,45 +702,58 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
     # Per-row free Amp ID prefill (skipping db + current batch rows), normalize on blur.
     # Batch save with amp id range + uniqueness (batch + db) checks.
     amp_form_rows = []
-    amp_rows_column = ft.Column(spacing=2, tight=True)
+    # Using ListView (instead of Column+scroll) for more stable stacking of fixed-height row wrappers on dynamic + appends.
+    # spacing=4 + faint purple viewport bg creates visible separator strips between the colored row slots (borders won't touch).
+    # Inside each slot: inner Container(alignment=CENTER) + its padding for proper vertical centering of the row inside the fixed slot (no spacer clipping). Row vertical align only for internal items. Outer height=60 is the slot size.
+    amp_rows_column = ft.ListView(controls=[], spacing=4, auto_scroll=True, expand=False)
 
     def _add_amp_row(e=None):
         row_idx = len(amp_form_rows) + 1
 
         row_loc = ft.Dropdown(
-            label="Loc",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack Location")],
-            height=32,
-            width=125,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=180,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
         row_num = ft.Dropdown(
-            label="#",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Rack #")],
-            height=32,
-            width=48,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=100,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
         row_amp_num = ft.Dropdown(
-            label="Amp #",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Amp #")],
-            height=32,
-            width=70,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=100,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
         row_amp_type = ft.Dropdown(
-            label="Amp Type",
             options=[ft.dropdown.Option(o) for o in get_options_for_field("Amp Type")],
-            height=32,
-            width=70,
-            text_size=10,
+            dense=True,
+            height=28,
+            width=85,
+            text_size=11,
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=11),
         )
         row_amp_id = ft.TextField(
-            label="Amp ID",
-            height=32,
-            width=70,
+            dense=True,
+            height=28,
+            width=85,
             text_size=10,
             hint_text="e.g. 1.00 (unique)",
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
         )
 
         row_extra = {f: "" for f in amp_fields if f not in ["Amp #", "Amp Type", "Amp ID"]}
@@ -638,13 +776,16 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
 
         def _remove_amp_row(e=None, rdata=None):
             if rdata in amp_form_rows and len(amp_form_rows) > 1:
+                print(f"[DEBUG REMOVE AMP] removing, before len={len(amp_form_rows)}")
                 amp_form_rows.remove(rdata)
                 if rdata.get("ui") in amp_rows_column.controls:
                     amp_rows_column.controls.remove(rdata["ui"])
                 try:
                     amp_rows_column.update()
+                    amp_rows_viewport.update()
                 except Exception:
                     pass
+                print(f"[DEBUG REMOVE AMP] after len={len(amp_form_rows)}")
 
         rem_btn = ft.IconButton(
             icon=ft.Icons.REMOVE_CIRCLE_OUTLINE,
@@ -670,6 +811,42 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+        # Removed vertical padding from row_content (as requested: no extra padding/margins around the dropdowns vertically).
+        # Removed vertical padding from row_content (as requested: no extra padding/margins around the dropdowns vertically).
+        # The dropdown boxes are now sized purely by their height=28 + the Row's vertical_alignment=ft.CrossAxisAlignment.CENTER
+        # (which aligns the prefix text and rem_btn vertically to the dropdowns with no extra vertical margin).
+        row_content = ft.Container(
+            content=row_ui,
+            padding=ft.Padding.symmetric(horizontal=2, vertical=0),
+        )
+
+        # Better centering inside the fixed-height colored slot (row_wrapper):
+        # The inner Container uses alignment=ft.Alignment.CENTER so the row is vertically (and horizontally) centered
+        # within the outer fixed height. The padding on this inner container creates the visible colored "gap"/margin
+        # around the row *inside* the black border of the frame. Symmetric vertical padding gives even space top+bottom.
+        # This avoids the old spacer overflow/clipping problem and ensures proper vertical centering inside the slot.
+        # The outer height=60 (user's value) enforces consistent row slots so adding more rows via + doesn't cause overlap.
+        # Tune the vertical padding value (currently 6) for more/less internal gap. Or change outer height if you want
+        # denser or taller row slots overall.
+        debug_colors = [ft.Colors.RED, ft.Colors.BLUE, ft.Colors.GREEN, ft.Colors.AMBER, ft.Colors.PURPLE, ft.Colors.CYAN]
+        dbg_color = ft.Colors.with_opacity(0.22, debug_colors[(row_idx-1) % len(debug_colors)])
+        row_wrapper = ft.Container(
+            content=ft.Container(
+                content=row_content,
+                alignment=ft.Alignment.CENTER,
+                padding=ft.Padding.symmetric(horizontal=2, vertical=6),
+            ),
+            height=60,
+            bgcolor=dbg_color,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+                top=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+                right=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+                bottom=ft.BorderSide(width=1, color=ft.Colors.BLACK),
+            ),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
+
         row_data = {
             "loc_dd": row_loc,
             "num_dd": row_num,
@@ -677,16 +854,19 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             "amp_type_dd": row_amp_type,
             "amp_id_tf": row_amp_id,
             "extra_amp_values": row_extra,
-            "ui": row_ui,
+            "ui": row_wrapper,
         }
         rem_btn.on_click = lambda e, rd=row_data: _remove_amp_row(e, rd)
 
         amp_form_rows.append(row_data)
-        amp_rows_column.controls.append(row_ui)
+        amp_rows_column.controls.append(row_wrapper)
         try:
             amp_rows_column.update()
+            amp_rows_viewport.update()
         except Exception:
             pass
+
+        print(f"[DEBUG ADD AMP] added row_idx={row_idx}, now total amp_form_rows={len(amp_form_rows)}")
 
         # prefill next free Amp ID, skipping db + current batch rows
         try:
@@ -713,23 +893,72 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         tooltip="Add another amp row",
         on_click=lambda e: _add_amp_row(),
     )
-    amp_header = ft.Row(
-        [ft.Text("Create multiple amps at once", size=9, weight=ft.FontWeight.BOLD), add_amp_btn],
-        spacing=3,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    # DEBUG wrapper: Row itself can't take bgcolor, so wrap for the subtle header tint.
+    amp_header = ft.Container(
+        content=ft.Row(
+            [ft.Text("Create multiple amps at once", size=9, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK), add_amp_btn],
+            spacing=3,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.GREY),
+        padding=2,
     )
     # reuse or recreate taken for amps
     taken_amp_text = ft.Text(
         f"Taken Amp IDs (avoid these): {', '.join(get_taken_amp_ids()) if get_taken_amp_ids() else 'none yet'}",
         size=9,
         italic=True,
-        color=ft.Colors.GREY_700,
+        color=ft.Colors.BLACK,
+    )
+
+    # One-time compact labels row (no per-dd `label` on data rows to keep each row short/not tall)
+    # DEBUG wrapper (Row can't take bgcolor/border directly)
+    amp_labels_row = ft.Container(
+        content=ft.Row(
+            [
+                ft.Text("", width=16),
+                ft.Text("Loc", size=9, width=180, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+                ft.Text("#", size=9, width=100, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+                ft.Text("Amp #", size=9, width=100, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+                ft.Text("Amp Type", size=9, width=85, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+                ft.Text("Amp ID", size=9, width=85, text_align=ft.TextAlign.CENTER, color=ft.Colors.BLACK),
+            ],
+            spacing=1,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.YELLOW),
+        border=ft.Border(
+            left=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+            top=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+            right=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+            bottom=ft.BorderSide(width=1, color=ft.Colors.ORANGE),
+        ),
+        padding=2,
+    )
+
+    # Fixed height viewport for the rows list. DEBUG border (purple) + faint purple bg frames the list of colored row slots.
+    # The faint bg makes the 4px spacing gaps appear as clear tinted strips separating the red/blue/etc frames. (Debug only)
+    # Each slot uses inner Container(alignment=CENTER) + padding for even vertical centering/gap inside the colored frame. Outer height=60 is the fixed slot.
+    amp_rows_viewport = ft.Container(
+        content=amp_rows_column,
+        height=300,
+        expand=False,
+        border=ft.Border(
+            left=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+            top=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+            right=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+            bottom=ft.BorderSide(width=2, color=ft.Colors.PURPLE),
+        ),
+        padding=2,
+        # Very faint purple bg so the spacing gaps between colored row frames are easy to see as separator strips.
+        bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.PURPLE),
     )
     amp_multi = ft.Column(
-        [amp_header, amp_rows_column, taken_amp_text],
+        [amp_header, amp_labels_row, amp_rows_viewport, taken_amp_text],
         tight=True,
         spacing=2,
         visible=False,
+        # (outer debug border removed — Row/Column don't accept it directly; the per-row colored bands + purple viewport border provide the visual)
     )
 
     # Visibility groups (toggled when Device Type changes)
@@ -755,14 +984,14 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
         rack_dd.visible = False
         rack_multi.visible = is_rack
         amp_multi.visible = not is_rack
-        rack_only.visible = False
-        amp_only.visible = False
 
         if is_rack:
             if len(rack_form_rows) == 0:
+                print("[DEBUG SWITCH] adding first RACK row")
                 _add_rack_row()
         else:
             if len(amp_form_rows) == 0:
+                print("[DEBUG SWITCH] adding first AMP row")
                 _add_amp_row()
             # prefill logic for amp id already in _add_amp_row
 
@@ -771,6 +1000,7 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             _auto_fill_from_template()
             rack_multi.update()
             amp_multi.update()
+            print(f"[DEBUG SWITCH] after updates: rack_rows={len(rack_form_rows)}, amp_rows={len(amp_form_rows)}")
         except Exception:
             pass
 
@@ -783,23 +1013,30 @@ def _show_create_device_dialog(page: ft.Page, on_created=None):
             ft.dropdown.Option("Amplifier"),
         ],
         value="Rack",
+        dense=True,
+        height=40,
+        content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+        text_style=ft.TextStyle(color=ft.Colors.BLACK, size=10),
+        label_style=ft.TextStyle(color=ft.Colors.BLACK, size=9),
         on_select=_switch_form,
     )
 
     dlg = ft.AlertDialog(
-        title=ft.Text("Create New Device"),
-        content=ft.Column(
-            [
-                device_type_dd,
-                loc_dd,
-                rack_dd,
-                rack_multi,   # multi-rack rows (visible when Device=Rack)
-                amp_multi,    # multi-amp rows (visible when Device=Amplifier)
-                rack_only,    # fallback
-                amp_only,
-            ],
-            tight=True,
-            scroll=ft.ScrollMode.AUTO,
+        title=ft.Text("Create New Device", color=ft.Colors.BLACK),
+        content=ft.Container(
+            width=780,  # wider for the multi-row fields + debug colored slot frames. Debug visuals are temporary.
+            bgcolor=ft.Colors.WHITE,  # ensure light background for black text readability
+            content=ft.Column(
+                [
+                    ft.Text("DEBUG MODE (temporary): Vertical padding removed from row_content (vert=0 per request). Dropdowns use only height=28 + Row vertical align. Proper centering inside colored slot: inner Container(alignment=ft.Alignment.CENTER) + its padding (vert=6 symmetric) creates even colored gap top+bottom *inside* the fixed 60px frame. Outer height enforces slot size to avoid overlap on +add. Tune inner vert padding or outer height. Purple separators unchanged. Report gap measurements inside frames after adding 2nd row. [DEBUG] in console. We strip debug when centering/gaps good.", size=8, color=ft.Colors.RED, italic=True),
+                    device_type_dd,
+                    rack_multi,   # multi-rack rows (visible when Device=Rack)
+                    amp_multi,    # multi-amp rows (visible when Device=Amplifier)
+                ],
+                tight=True,
+                spacing=4,
+            ),
+            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         ),
         actions=[
             ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),

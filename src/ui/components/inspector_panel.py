@@ -216,7 +216,7 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
 
     label = ft.Text(
         field_name,
-        size=9,
+        size=8,
         weight=ft.FontWeight.BOLD,
         color=color_scheme.on_secondary_container,
         text_align=ft.TextAlign.CENTER,
@@ -253,11 +253,12 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
                 options=[ft.dropdown.Option(str(o)) for o in options],
                 dense=True,
                 text_size=11,
-                height=32,
+                height=26,
+                width=92,
                 on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
                 border_color=color_scheme.outline,
                 focused_border_color=color_scheme.primary,
-                content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
+                content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
             )
         else:
             # Dropdown for fields with predefined choices
@@ -266,11 +267,12 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
                 options=[ft.dropdown.Option(str(o)) for o in options],
                 dense=True,
                 text_size=11,
-                height=32,
+                height=26,
+                width=92,
                 on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
                 border_color=color_scheme.outline,
                 focused_border_color=color_scheme.primary,
-                content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
+                content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
             )
     elif on_value_changed:
         # Free text
@@ -278,12 +280,12 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
             value=display_value,
             dense=True,
             text_size=11,
-            height=28,
+            height=26,
             on_submit=lambda e, fn=field_name: on_value_changed(fn, e.control.value),
             on_blur=lambda e, fn=field_name: on_value_changed(fn, e.control.value),
             border_color=color_scheme.outline,
             focused_border_color=color_scheme.primary,
-            content_padding=ft.Padding.only(left=4, right=4, top=2, bottom=2),
+            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
         )
 
         if field_name == "Amp ID":
@@ -304,32 +306,32 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
     else:
         value_ctrl = ft.Text(
             display_value,
-            size=11,
+            size=10,
             weight=ft.FontWeight.W_500,
             color=color_scheme.on_secondary_container,
             text_align=ft.TextAlign.CENTER,
         )
 
-    tile_width = 110
+    tile_width = 100
     return ft.Container(
         content=ft.Column(
             [
                 label,
                 value_ctrl,
             ],
-            spacing=1,
+            spacing=0,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             tight=True,
         ),
         width=tile_width,
-        padding=ft.Padding.symmetric(horizontal=4, vertical=3),
+        padding=ft.Padding.symmetric(horizontal=3, vertical=1),
         border=ft.Border(
             left=ft.BorderSide(width=1, color=color_scheme.outline),
             top=ft.BorderSide(width=1, color=color_scheme.outline),
             right=ft.BorderSide(width=1, color=color_scheme.outline),
             bottom=ft.BorderSide(width=1, color=color_scheme.outline),
         ),
-        border_radius=4,
+        border_radius=3,
         bgcolor=color_scheme.primary_container,
         alignment=ft.Alignment.CENTER,
     )
@@ -351,7 +353,7 @@ def _build_tab_content(field_names: list[str], props: dict, color_scheme, on_val
             [
                 ft.Row(
                     tiles,
-                    spacing=3,
+                    spacing=2,
                     wrap=True,
                     alignment=ft.MainAxisAlignment.START,
                     vertical_alignment=ft.CrossAxisAlignment.START,
@@ -360,7 +362,7 @@ def _build_tab_content(field_names: list[str], props: dict, color_scheme, on_val
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         ),
-        padding=ft.Padding.only(top=6, bottom=8, left=2, right=2),
+        padding=ft.Padding.only(top=4, bottom=6, left=2, right=2),
         expand=True,
     )
 
@@ -421,7 +423,9 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                             ft.dropdown.Option("Amplifier"),
                         ],
                         value="Rack",
-                        height=50,
+                        dense=True,
+                        height=40,
+                        content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
                     ),
                     ft.TextField(
                         ref=name_ref,
