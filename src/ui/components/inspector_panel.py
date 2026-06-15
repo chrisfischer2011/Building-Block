@@ -30,7 +30,12 @@ from src.ui.theme import (
     CARD_ELEVATION_LOW,
     CARD_MARGIN,
     EMPTY_STATE_PADDING,
+    FORM_CONTENT_PADDING,
+    FORM_CONTROL_HEIGHT,
+    FORM_DENSE,
     FORM_SPACING,
+    FORM_TEXT_SIZE,
+    FORM_TEXT_STYLE,
 )
 from src.utils.feedback import show_coming_soon, show_success
 
@@ -209,6 +214,8 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
     Renders as Dropdown if the field has options in DEVICE_FIELD_OPTIONS, else TextField.
     Saves on blur / submit (enter/tab) via the provided callback.
     """
+    # Debug coloring disabled for clean layout.
+    DEBUG_FORM_CONTROLS = False
     # Always display Amp IDs with exactly 2 decimal places for consistency (even legacy data)
     if field_name == "Amp ID":
         value = normalize_amp_id(value)
@@ -216,7 +223,7 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
 
     label = ft.Text(
         field_name,
-        size=8,
+        size=10,
         weight=ft.FontWeight.BOLD,
         color=color_scheme.on_secondary_container,
         text_align=ft.TextAlign.CENTER,
@@ -251,41 +258,42 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
             value_ctrl = ft.Dropdown(
                 value=display_value if display_value else None,
                 options=[ft.dropdown.Option(str(o)) for o in options],
-                dense=True,
-                text_size=11,
-                height=26,
-                width=92,
+                dense=FORM_DENSE,
+                text_size=FORM_TEXT_SIZE,
+                height=50,
+                width=130,  # adjusted wider to fit text without cutoff, allows multiple tiles per row
                 on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
                 border_color=color_scheme.outline,
                 focused_border_color=color_scheme.primary,
-                content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+                content_padding=FORM_CONTENT_PADDING,
             )
         else:
             # Dropdown for fields with predefined choices
             value_ctrl = ft.Dropdown(
                 value=display_value if display_value else None,
                 options=[ft.dropdown.Option(str(o)) for o in options],
-                dense=True,
-                text_size=11,
-                height=26,
-                width=92,
+                dense=FORM_DENSE,
+                text_size=FORM_TEXT_SIZE,
+                height=50,
+                width=130,  # adjusted wider to fit text without cutoff, allows multiple tiles per row
                 on_select=lambda e, fn=field_name: on_value_changed(fn, getattr(e, 'data', None) or getattr(getattr(e, 'control', None), 'value', None)),
                 border_color=color_scheme.outline,
                 focused_border_color=color_scheme.primary,
-                content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+                content_padding=FORM_CONTENT_PADDING,
             )
     elif on_value_changed:
         # Free text
         value_ctrl = ft.TextField(
             value=display_value,
-            dense=True,
-            text_size=11,
-            height=26,
+            dense=FORM_DENSE,
+            text_size=FORM_TEXT_SIZE,
+            height=50,
+            width=130,  # adjusted wider to fit text without cutoff, allows multiple tiles per row
             on_submit=lambda e, fn=field_name: on_value_changed(fn, e.control.value),
             on_blur=lambda e, fn=field_name: on_value_changed(fn, e.control.value),
             border_color=color_scheme.outline,
             focused_border_color=color_scheme.primary,
-            content_padding=ft.Padding.only(left=3, right=3, top=0, bottom=0),
+            content_padding=FORM_CONTENT_PADDING,
         )
 
         if field_name == "Amp ID":
@@ -312,7 +320,22 @@ def _attribute_tile(field_name: str, value: Any, all_props: dict, color_scheme, 
             text_align=ft.TextAlign.CENTER,
         )
 
-    tile_width = 100
+    # Apply debug coloring (if enabled) to the actual editable controls.
+    # This uses the same three colors as the Add popup so you can visually compare
+    # the internal layout (text / padding / margins) between Inspector tiles and the popup.
+    if DEBUG_FORM_CONTROLS and on_value_changed:
+        if isinstance(value_ctrl, (ft.Dropdown, ft.TextField)):
+            value_ctrl.bgcolor = ft.Colors.with_opacity(0.45, ft.Colors.AMBER)   # Padding area
+            value_ctrl.border_color = ft.Colors.RED                               # Margins / box
+            value_ctrl.focused_border_color = ft.Colors.DEEP_ORANGE
+            value_ctrl.text_style = ft.TextStyle(color=ft.Colors.BLUE, size=FORM_TEXT_SIZE)  # Text part
+            # Extra nudge for Dropdown text color
+            try:
+                value_ctrl.color = ft.Colors.BLUE
+            except Exception:
+                pass
+
+    tile_width = 140  # adjusted to allow several tiles per row (wrap) without text cutoff in dropdowns; wider than previous 100
     return ft.Container(
         content=ft.Column(
             [
@@ -423,15 +446,18 @@ def create_inspector_panel(page: ft.Page, app_state) -> ft.Card:
                             ft.dropdown.Option("Amplifier"),
                         ],
                         value="Rack",
-                        dense=True,
-                        height=40,
-                        content_padding=ft.Padding.only(left=8, right=8, top=4, bottom=4),
+                        dense=FORM_DENSE,
+                        height=50,
+                        content_padding=FORM_CONTENT_PADDING,
+                        text_style=FORM_TEXT_STYLE,
                     ),
                     ft.TextField(
                         ref=name_ref,
                         label="Name / Identifier",
-                        height=45,
-                        text_size=14,
+                        dense=FORM_DENSE,
+                        height=50,
+                        text_size=FORM_TEXT_SIZE,
+                        content_padding=FORM_CONTENT_PADDING,
                     ),
                     # Placeholder note for now
                     ft.Text(
