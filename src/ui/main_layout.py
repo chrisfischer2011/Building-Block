@@ -4,6 +4,7 @@ from src.ui.app_state import AppState
 from src.ui.components.inspector_panel import create_inspector_panel
 from src.ui.components.left_sidebar import create_left_sidebar
 from src.ui.components.main_content import create_main_content
+from src.ui.components.rack_visual import create_rack_visual_panel
 from src.ui.theme import (
     CARD_CONTENT_PADDING,
     CARD_ELEVATION,
@@ -50,6 +51,56 @@ def create_main_layout(page: ft.Page, app_state: AppState) -> ft.Row:
     if hasattr(app_state, "register_inspector_refresh"):
         app_state.register_inspector_refresh(_rebuild_inspector)
 
+    # --- Visual (bottom) wrapper: 112 rack faceplate (now explicitly sized to 1/4 printable page
+    # section for accurate print layout preview). Non-112 falls back to legacy main_content.
+    # We use explicit height (supported in this Flet version) + dynamic adjustment in _rebuild_visual
+    # so the 112 preview is strictly limited to ~1/4 page proportions, while fallback content isn't
+    # artificially clipped.
+    visual_wrapper = ft.Container()  # height will be set dynamically in _rebuild_visual
+
+    def _rebuild_visual():
+        """Rebuild the bottom visual area.
+        For Rack + Rack Type in (112, 112(AIS)) we show the stylized visualization (capped at 1/4 page size).
+        Everything else falls back to create_main_content (left untouched per request).
+        """
+        item = getattr(app_state, "selected_item", None)
+        is_rack = bool(item) and (getattr(item, "device_type", "") or "").lower() == "rack"
+        rack_type = ""
+        if is_rack:
+            props = getattr(item, "properties", {}) or {}
+            if isinstance(props, str):
+                try:
+                    import json
+                    props = json.loads(props)
+                except Exception:
+                    props = {}
+            rack_type = (props.get("Rack Type") or "").strip()
+
+        is_112 = rack_type in ("112", "112(AIS)")
+
+        try:
+            if is_rack and is_112:
+                new_content = create_rack_visual_panel(page, app_state)
+                visual_wrapper.height = 530  # enforce 1/4 page limit for the 112 preview
+            else:
+                new_content = create_main_content(page, app_state)
+                visual_wrapper.height = None  # let fallback use available space (no artificial cap)
+            visual_wrapper.content = new_content
+            visual_wrapper.update()
+        except Exception as ex:
+            print(f"[Visual] Failed to rebuild bottom visual: {ex}")
+            try:
+                visual_wrapper.update()
+            except Exception:
+                pass
+
+    # Initial content for the bottom visual slot
+    _rebuild_visual()
+
+    # Allow AppState.clear() (File > New) and explicit visual refreshes to reset the bottom area
+    if hasattr(app_state, "register_visual_refresh"):
+        app_state.register_visual_refresh(_rebuild_visual)
+
     # --- Selection change handler (wired to left sidebar) ---
     # When the user clicks an item, this forces the inspector (and any other
     # dependent panels) to rebuild with the newly selected data.
@@ -61,6 +112,10 @@ def create_main_layout(page: ft.Page, app_state: AppState) -> ft.Row:
 
         # Rebuild the inspector to reflect the current selection (or empty state)
         _rebuild_inspector()
+
+        # Rebuild the bottom visual (will show 112 faceplate only for qualifying racks,
+        # otherwise falls back to the legacy main_content placeholder/behavior).
+        _rebuild_visual()
 
         # Belt-and-suspenders top-level refresh
         try:
@@ -121,13 +176,14 @@ def create_main_layout(page: ft.Page, app_state: AppState) -> ft.Row:
         mouse_cursor=ft.MouseCursor.RESIZE_LEFT_RIGHT,
     )
 
-    # The inspector_wrapper (and its _rebuild_inspector function) were already
+    # The inspector_wrapper and visual_wrapper (and their rebuild functions) were already
     # created earlier so that both File > New and normal selection changes can
-    # refresh it. We simply reference the existing wrapper here.
+    # refresh them. The visual_wrapper internally shows the 112 rack visualization for
+    # qualifying racks or falls back to the legacy main_content for everything else.
     right_panel = ft.Column(
         [
             inspector_wrapper,
-            create_main_content(page, app_state),
+            visual_wrapper,
         ],
         spacing=PANEL_SPACING,
         expand=True,

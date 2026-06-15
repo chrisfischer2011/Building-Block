@@ -25,12 +25,15 @@ class AppState:
     # Whether the Inspector is in "Create New" mode
     is_creating: bool = False
 
-    # Callbacks registered by UI components (sidebar, inspector) so that
+    # Callbacks registered by UI components (sidebar, inspector, rack visual) so that
     # "File > New" can trigger live refresh/rebuild of those panels.
     _sidebar_refresh_callbacks: List[Callable[[], None]] = field(
         default_factory=list, init=False, repr=False
     )
     _inspector_refresh_callbacks: List[Callable[[], None]] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _visual_refresh_callbacks: List[Callable[[], None]] = field(
         default_factory=list, init=False, repr=False
     )
 
@@ -76,6 +79,12 @@ class AppState:
             except Exception as ex:
                 print(f"[AppState] inspector refresh callback error: {ex}")
 
+        for cb in list(self._visual_refresh_callbacks):
+            try:
+                cb()
+            except Exception as ex:
+                print(f"[AppState] visual refresh callback error: {ex}")
+
     def register_sidebar_refresh(self, callback: Callable[[], None]) -> None:
         """Register a function that can be called to force the left sidebar to reload/rebuild."""
         if callback and callback not in self._sidebar_refresh_callbacks:
@@ -85,3 +94,8 @@ class AppState:
         """Register a function that can be called to force the inspector panel to rebuild."""
         if callback and callback not in self._inspector_refresh_callbacks:
             self._inspector_refresh_callbacks.append(callback)
+
+    def register_visual_refresh(self, callback: Callable[[], None]) -> None:
+        """Register a function that can be called to force the bottom rack visual panel to rebuild."""
+        if callback and callback not in self._visual_refresh_callbacks:
+            self._visual_refresh_callbacks.append(callback)
