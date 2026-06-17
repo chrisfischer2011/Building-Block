@@ -81,6 +81,27 @@ def _build_112_visual(page: ft.Page, rack: DataEntry) -> ft.Container:
     Values are populated live from the rack properties + amp lookups.
     The entire returned control has explicit width/height limits (no expand).
     """
+def _build_112_visual(page: ft.Page, rack: DataEntry) -> ft.Container:
+    """Build the 112 rack visualization using a strict unit-based grid for print accuracy.
+
+    Grid rules (as specified):
+    - Each of the 12 numbered rows (1-12) is 1 unit high.
+    - 5 additional rows above the numbers (rows 1-5) for header info.
+      - Row 1: "1/4 Page section--112 Rack"
+      - Row 2: rack info line (name | template type | amp slots)
+      - Rows 3-5: blank
+    - Numbered rows start at grid row 6 (number "1" in row 6, "2" in row 7, ..., "12" in row 17).
+    - Every row is 10 units wide.
+    - Item sizes (h x w in units):
+        Switch Primary=1x5, Switch Secondary=1x5
+        Amp slots (the 4 positions)=2x10 each
+        Distro 1=3x2, Maps 1=3x2, Maps 2=3x2
+        Ethernet I/O Management=1x2 (two instances)
+        Signal Thru=2x2, Signal In=2x2
+
+    The left column shows the RU numbers 1-12 only next to the numbered rows.
+    The overall visual is constrained (for 1/4 page section use).
+    """
     amp_lookup = _build_amp_lookup()
     rack_props = getattr(rack, "properties", {}) or {}
     if isinstance(rack_props, str):
@@ -95,279 +116,338 @@ def _build_112_visual(page: ft.Page, rack: DataEntry) -> ft.Container:
     rack_type = _get_rack_prop(rack, "Rack Type")
     n_slots = get_rack_amp_slots(template, rack_type)
 
-    # =====================================================================
-    # Print-accurate sizing: 112 rack visual = 1/4 of the printable page
-    # These fixed limits ensure the preview in the app matches how it will
-    # appear when the racks are printed as sections on a page (e.g. 2x2 layout).
-    # Width/height chosen so the 12RU + I/O layout is proportionally correct
-    # and does not grow/shrink to fill arbitrary UI space.
-    # =====================================================================
-    TARGET_WIDTH = 420   # 1/4 page width in preview pixels
-    TARGET_HEIGHT = 510  # 1/4 page height in preview pixels (includes title + frame)
+    # Unit system (tuned so total ~ matches previous 1/4 page target size)
+    UNIT_W = 38          # px per horizontal unit (10 units wide = 380 px content)
+    UNIT_H = 28          # px per vertical unit (1 unit high row)
+    LEFT_NUM_W = 30      # px for the RU number strip
 
-    # Compute RU height so the 12 logical rows (1 switch + 8 black bay + 3 bottom)
-    # exactly fill the target printable section height.
-    TITLE_HEIGHT = 20
-    OUTER_FRAME = 10
-    available_for_rack = TARGET_HEIGHT - TITLE_HEIGHT - OUTER_FRAME
-    RU_HEIGHT = available_for_rack / 12   # ~39-40 px per RU for accurate print scale
+    RACK_CONTENT_W = 10 * UNIT_W
+    HEADER_H = 5 * UNIT_H
+    RACK_FACE_H = 12 * UNIT_H   # the 12 numbered rows
 
-    # Colors matching the reference image
-    BROWN_PRIMARY = ft.Colors.BROWN_600
-    RED_SECONDARY = ft.Colors.RED
-    AMP_TEXT_COLOR = ft.Colors.YELLOW
-    AMP_TEXT_SECONDARY = ft.Colors.YELLOW_200
-    BOTTOM_BG = ft.Colors.CYAN_100  # light blue/cyan for bottom section
-    RU_LABEL_BG = ft.Colors.YELLOW_200
+    BROWN = ft.Colors.BROWN_600
+    RED = ft.Colors.RED
+    YELLOW = ft.Colors.YELLOW
+    YELLOW_DIM = ft.Colors.YELLOW_200
+    LIGHT_BLUE = ft.Colors.CYAN_100
+    BLACK = ft.Colors.BLACK
+    DARK = ft.Colors.GREY_900
 
-    # === Left RU scale (yellow 1-12 aligned to each row) ===
-    ru_labels = []
-    for ru in range(1, 13):
-        ru_labels.append(
+    # Helper to get assigned amp display for a slot
+    def _get_amp_display(slot_key: str) -> str:
+        val = _get_rack_prop(rack, slot_key)
+        if not val:
+            return "—"
+        dev = amp_lookup.get(val)
+        if dev:
+            at = (dev.properties or {}).get("Amp Type", "")
+            return f"{val} {at}".strip() if at else val
+        return val
+
+    # === Header rows 1-5 (full width above the numbered rack) ===
+    header_rows = []
+    # Row 1
+    header_rows.append(
+        ft.Container(
+            height=UNIT_H,
+            width=RACK_CONTENT_W,
+            bgcolor=DARK,
+            content=ft.Text(
+                "1/4 Page section--112 Rack",
+                size=11,
+                weight=ft.FontWeight.BOLD,
+                color=ft.Colors.WHITE,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            alignment=ft.Alignment.CENTER,
+        )
+    )
+    # Row 2
+    info_line = f"{rack_name}|{template} {rack_type}| {n_slots} amp slots"
+    header_rows.append(
+        ft.Container(
+            height=UNIT_H,
+            width=RACK_CONTENT_W,
+            bgcolor=DARK,
+            content=ft.Text(
+                info_line,
+                size=9,
+                color=ft.Colors.WHITE70,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            alignment=ft.Alignment.CENTER,
+        )
+    )
+    # Rows 3-5 blank
+    for _ in range(3):
+        header_rows.append(
+            ft.Container(height=UNIT_H, width=RACK_CONTENT_W, bgcolor=BLACK)
+        )
+
+    header = ft.Container(
+        width=LEFT_NUM_W + RACK_CONTENT_W,
+        height=HEADER_H,
+        content=ft.Column(header_rows, spacing=0),
+        padding=ft.Padding.only(left=LEFT_NUM_W),  # align text with rack content
+    )
+
+    # === Numbered rows 6-17 (numbers 1-12 on left, 10-unit content on right) ===
+    # Content row 0 = number "1", content row 11 = number "12"
+    num_labels = []
+    for i in range(1, 13):
+        num_labels.append(
             ft.Container(
+                height=UNIT_H,
+                width=LEFT_NUM_W,
+                bgcolor=ft.Colors.YELLOW_200,
                 content=ft.Text(
-                    str(ru),
-                    size=10,
+                    str(i),
+                    size=9,
                     weight=ft.FontWeight.BOLD,
                     color=ft.Colors.BLACK,
                     text_align=ft.TextAlign.CENTER,
                 ),
-                width=24,
-                height=RU_HEIGHT,
-                bgcolor=RU_LABEL_BG,
                 alignment=ft.Alignment.CENTER,
-                border=ft.Border(
-                    right=ft.BorderSide(width=1, color=ft.Colors.BLACK26),
-                ),
             )
         )
-    left_scale = ft.Column(ru_labels, spacing=0, tight=True)
+    left_numbers = ft.Column(num_labels, spacing=0, tight=True)
 
-    # === Switch row (RU 1) - brown left + red right ===
-    switch_primary_val = _get_rack_prop(rack, "Switch Config", "—")
-    switch_row = ft.Container(
-        height=RU_HEIGHT,
-        content=ft.Row(
-            [
-                ft.Container(
-                    content=ft.Column(
-                        [
-                            ft.Text("SWITCH PRIMARY", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE, size=10),
-                            ft.Text(switch_primary_val, color=ft.Colors.WHITE70, size=8),
-                        ],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=1,
-                    ),
-                    bgcolor=BROWN_PRIMARY,
-                    expand=2,
-                    padding=ft.Padding.symmetric(horizontal=5, vertical=1),
-                    alignment=ft.Alignment.CENTER,
-                ),
-                ft.Container(
-                    content=ft.Column(
-                        [
-                            ft.Text("SWITCH SECONDARY", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE, size=10),
-                            ft.Text("Redundant" if switch_primary_val == "Redundant" else "—", color=ft.Colors.WHITE70, size=8),
-                        ],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=1,
-                    ),
-                    bgcolor=RED_SECONDARY,
-                    expand=3,
-                    padding=ft.Padding.symmetric(horizontal=5, vertical=1),
-                    alignment=ft.Alignment.CENTER,
-                ),
-            ],
-            spacing=0,
-        ),
-        bgcolor=ft.Colors.BLACK,
+    # Build the 12-row rack content using Stack for precise unit positioning
+    # content rows 0-11
+    stack_children = []
+
+    # Full black background for the amp/switch area
+    stack_children.append(
+        ft.Container(
+            left=0,
+            top=0,
+            width=RACK_CONTENT_W,
+            height=RACK_FACE_H,
+            bgcolor=BLACK,
+        )
     )
 
-    # === Amp labels for the 4 fixed visual positions (order & placement from the PNG) ===
-    def _make_amp_label(label: str, slot_key: str) -> ft.Container:
-        assigned = _get_rack_prop(rack, slot_key)
-        value_text = assigned or "—"
-        if assigned:
-            amp_dev = amp_lookup.get(assigned)
-            if amp_dev:
-                atype = (amp_dev.properties or {}).get("Amp Type", "")
-                if atype:
-                    value_text = f"{assigned} {atype}"
-        return ft.Container(
+    # Row 0 (number 1): Switches - 1x5 each
+    # Switch Primary (cols 0-4)
+    switch_val = _get_rack_prop(rack, "Switch Config", "—")
+    stack_children.append(
+        ft.Container(
+            left=0,
+            top=0 * UNIT_H,
+            width=5 * UNIT_W,
+            height=1 * UNIT_H,
+            bgcolor=BROWN,
             content=ft.Column(
                 [
-                    ft.Text(label, weight=ft.FontWeight.BOLD, color=AMP_TEXT_COLOR, size=12),
-                    ft.Text(value_text, color=AMP_TEXT_SECONDARY, size=8),
+                    ft.Text("SWITCH PRIMARY", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE, size=9),
+                    ft.Text(switch_val, color=ft.Colors.WHITE70, size=7),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 spacing=1,
             ),
             alignment=ft.Alignment.CENTER,
         )
-
-    # Black middle bay (RU 2-9). Amps placed with spacers to match the reference PNG spacing.
-    middle_height = 8 * RU_HEIGHT
-    middle_bay = ft.Container(
-        height=middle_height,
-        bgcolor=ft.Colors.BLACK,
-        content=ft.Column(
-            [
-                ft.Container(height=RU_HEIGHT * 0.35, bgcolor=ft.Colors.BLACK),
-                _make_amp_label("AMP4", "Amp # 4"),
-                ft.Container(height=RU_HEIGHT * 1.15, bgcolor=ft.Colors.BLACK),
-                _make_amp_label("AMP1", "Amp # 1"),
-                ft.Container(height=RU_HEIGHT * 0.95, bgcolor=ft.Colors.BLACK),
-                _make_amp_label("AMP2", "Amp # 2"),
-                ft.Container(height=RU_HEIGHT * 0.95, bgcolor=ft.Colors.BLACK),
-                _make_amp_label("AMP3", "Amp # 3"),
-                ft.Container(height=RU_HEIGHT * 0.55, bgcolor=ft.Colors.BLACK),
-            ],
-            spacing=0,
-            alignment=ft.MainAxisAlignment.START,
-        ),
-        alignment=ft.Alignment.CENTER,
     )
-
-    # === Bottom section (RU 10-12) - exact layout from the PNG ===
-    bottom_height = 3 * RU_HEIGHT
-
-    def _make_tall_block(label: str, val: str) -> ft.Container:
-        return ft.Container(
+    # Switch Secondary (cols 5-9)
+    stack_children.append(
+        ft.Container(
+            left=5 * UNIT_W,
+            top=0 * UNIT_H,
+            width=5 * UNIT_W,
+            height=1 * UNIT_H,
+            bgcolor=RED,
             content=ft.Column(
                 [
-                    ft.Text(label, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=10, text_align=ft.TextAlign.CENTER),
-                    ft.Text(val or "—", color=ft.Colors.BLACK87, size=8, text_align=ft.TextAlign.CENTER),
-                ],
-                alignment=ft.MainAxisAlignment.CENTER,
-                spacing=2,
-            ),
-            bgcolor=BOTTOM_BG,
-            expand=1,
-            alignment=ft.Alignment.CENTER,
-            padding=ft.Padding.symmetric(horizontal=2, vertical=3),
-        )
-
-    def _make_small_block(label: str, val: str) -> ft.Container:
-        return ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text(label, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=7, text_align=ft.TextAlign.CENTER),
-                    ft.Text(val or "—", color=ft.Colors.BLACK87, size=7, text_align=ft.TextAlign.CENTER),
+                    ft.Text("SWITCH SECONDARY", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE, size=9),
+                    ft.Text("Redundant" if switch_val == "Redundant" else "—", color=ft.Colors.WHITE70, size=7),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 spacing=1,
             ),
-            bgcolor=BOTTOM_BG,
-            expand=1,
             alignment=ft.Alignment.CENTER,
-            padding=ft.Padding.symmetric(horizontal=1, vertical=1),
+        )
+    )
+
+    # Amp slots - 2x10 each, placed in the 8 rows after the switch row (content rows 1-8)
+    # Using the mapping from the reference (top position = AMP4 slot, etc.)
+    amp_defs = [
+        ("AMP4", "Amp # 4", 1),   # starts at content row 1
+        ("AMP1", "Amp # 1", 3),
+        ("AMP2", "Amp # 2", 5),
+        ("AMP3", "Amp # 3", 7),
+    ]
+    for label, slot_key, start_row in amp_defs:
+        val = _get_amp_display(slot_key)
+        stack_children.append(
+            ft.Container(
+                left=0,
+                top=start_row * UNIT_H,
+                width=10 * UNIT_W,
+                height=2 * UNIT_H,
+                bgcolor=ft.Colors.GREY_800,
+                border=ft.Border(
+                    left=ft.BorderSide(width=1, color=ft.Colors.WHITE24),
+                    top=ft.BorderSide(width=1, color=ft.Colors.WHITE24),
+                    right=ft.BorderSide(width=1, color=ft.Colors.WHITE24),
+                    bottom=ft.BorderSide(width=1, color=ft.Colors.WHITE24),
+                ),
+                content=ft.Column(
+                    [
+                        ft.Text(label, weight=ft.FontWeight.BOLD, color=YELLOW, size=11),
+                        ft.Text(val, color=YELLOW_DIM, size=8),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=2,
+                ),
+                alignment=ft.Alignment.CENTER,
+            )
         )
 
+    # Bottom I/O - rows 9-11 (3 units high), cols as specified
     distro1_val = _get_rack_prop(rack, "Distro 1")
     maps2_val = _get_rack_prop(rack, "Maps 2")
     maps1_val = _get_rack_prop(rack, "Maps 1")
     signal_thru_val = _get_rack_prop(rack, "Signal Thru")
     signal_in_val = _get_rack_prop(rack, "Signal In")
-    eth1_val = _get_rack_prop(rack, "Off Ramp")
-    eth2_val = _get_rack_prop(rack, "AES Input")
+    eth1_val = _get_rack_prop(rack, "Off Ramp") or "—"
+    eth2_val = _get_rack_prop(rack, "AES Input") or "—"
 
-    right_split = ft.Container(
-        content=ft.Column(
-            [
-                ft.Row(
-                    [
-                        _make_small_block("ETHERNET I/O\nMANAGEMENT", eth1_val),
-                        _make_small_block("ETHERNET I/O\nMANAGEMENT", eth2_val),
-                    ],
-                    expand=True,
-                    spacing=1,
-                ),
-                ft.Row(
-                    [
-                        _make_small_block("SIGNAL THRU", signal_thru_val),
-                        _make_small_block("SIGNAL IN", signal_in_val),
-                    ],
-                    expand=True,
-                    spacing=1,
-                ),
-            ],
-            spacing=1,
-            expand=True,
-        ),
-        expand=1,
+    bottom_start = 9
+
+    # Distro 1 (3x2) cols 0-1
+    stack_children.append(
+        ft.Container(
+            left=0,
+            top=bottom_start * UNIT_H,
+            width=2 * UNIT_W,
+            height=3 * UNIT_H,
+            bgcolor=LIGHT_BLUE,
+            content=ft.Column(
+                [ft.Text("DISTRO 1", weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=8),
+                 ft.Text(distro1_val or "—", color=ft.Colors.BLACK87, size=7)],
+                alignment=ft.MainAxisAlignment.CENTER, spacing=2
+            ),
+            alignment=ft.Alignment.CENTER,
+        )
+    )
+    # Maps 2 (3x2) cols 2-3
+    stack_children.append(
+        ft.Container(
+            left=2 * UNIT_W,
+            top=bottom_start * UNIT_H,
+            width=2 * UNIT_W,
+            height=3 * UNIT_H,
+            bgcolor=LIGHT_BLUE,
+            content=ft.Column(
+                [ft.Text("MAPS 2", weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=8),
+                 ft.Text(maps2_val or "—", color=ft.Colors.BLACK87, size=7)],
+                alignment=ft.MainAxisAlignment.CENTER, spacing=2
+            ),
+            alignment=ft.Alignment.CENTER,
+        )
+    )
+    # Maps 1 (3x2) cols 4-5
+    stack_children.append(
+        ft.Container(
+            left=4 * UNIT_W,
+            top=bottom_start * UNIT_H,
+            width=2 * UNIT_W,
+            height=3 * UNIT_H,
+            bgcolor=LIGHT_BLUE,
+            content=ft.Column(
+                [ft.Text("MAPS 1", weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=8),
+                 ft.Text(maps1_val or "—", color=ft.Colors.BLACK87, size=7)],
+                alignment=ft.MainAxisAlignment.CENTER, spacing=2
+            ),
+            alignment=ft.Alignment.CENTER,
+        )
     )
 
-    bottom_section = ft.Container(
-        height=bottom_height,
-        content=ft.Row(
-            [
-                _make_tall_block("DISTRO 1", distro1_val),
-                _make_tall_block("MAPS 2", maps2_val),
-                _make_tall_block("MAPS 1", maps1_val),
-                right_split,
-            ],
-            spacing=1,
-            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
-        ),
-        bgcolor=ft.Colors.BLACK,
+    # Right side cols 6-9
+    # Row 9 (top of bottom 3): two Ethernet 1x2
+    stack_children.append(
+        ft.Container(
+            left=6 * UNIT_W,
+            top=bottom_start * UNIT_H,
+            width=2 * UNIT_W,
+            height=1 * UNIT_H,
+            bgcolor=LIGHT_BLUE,
+            content=ft.Text("ETHERNET I/O\nMANAGEMENT", weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=6, text_align=ft.TextAlign.CENTER),
+            alignment=ft.Alignment.CENTER,
+            padding=1,
+        )
+    )
+    stack_children.append(
+        ft.Container(
+            left=8 * UNIT_W,
+            top=bottom_start * UNIT_H,
+            width=2 * UNIT_W,
+            height=1 * UNIT_H,
+            bgcolor=LIGHT_BLUE,
+            content=ft.Text("ETHERNET I/O\nMANAGEMENT", weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=6, text_align=ft.TextAlign.CENTER),
+            alignment=ft.Alignment.CENTER,
+            padding=1,
+        )
     )
 
-    # === Main face content (scale + visual rows) ===
-    face_content = ft.Column(
-        [
-            switch_row,
-            middle_bay,
-            bottom_section,
-        ],
+    # Rows 10-11: Signal Thru 2x2 (cols 6-7) and Signal In 2x2 (cols 8-9)
+    stack_children.append(
+        ft.Container(
+            left=6 * UNIT_W,
+            top=(bottom_start + 1) * UNIT_H,
+            width=2 * UNIT_W,
+            height=2 * UNIT_H,
+            bgcolor=LIGHT_BLUE,
+            content=ft.Column(
+                [ft.Text("SIGNAL THRU", weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=7),
+                 ft.Text(signal_thru_val or "—", color=ft.Colors.BLACK87, size=6)],
+                alignment=ft.MainAxisAlignment.CENTER, spacing=1
+            ),
+            alignment=ft.Alignment.CENTER,
+        )
+    )
+    stack_children.append(
+        ft.Container(
+            left=8 * UNIT_W,
+            top=(bottom_start + 1) * UNIT_H,
+            width=2 * UNIT_W,
+            height=2 * UNIT_H,
+            bgcolor=LIGHT_BLUE,
+            content=ft.Column(
+                [ft.Text("SIGNAL IN", weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, size=7),
+                 ft.Text(signal_in_val or "—", color=ft.Colors.BLACK87, size=6)],
+                alignment=ft.MainAxisAlignment.CENTER, spacing=1
+            ),
+            alignment=ft.Alignment.CENTER,
+        )
+    )
+
+    rack_content = ft.Container(
+        width=RACK_CONTENT_W,
+        height=RACK_FACE_H,
+        content=ft.Stack(stack_children),
+        bgcolor=BLACK,  # base for any uncovered areas
+    )
+
+    # Lower part: numbers + rack content
+    lower = ft.Row(
+        [left_numbers, rack_content],
         spacing=0,
-        tight=True,
-    )
-
-    # The rack face with left scale. Constrain its width to leave room inside the 1/4 page box.
-    face_width = TARGET_WIDTH - 18
-    face_row = ft.Row(
-        [left_scale, face_content],
-        spacing=1,
         vertical_alignment=ft.CrossAxisAlignment.START,
     )
-    framed_face = ft.Container(
-        content=face_row,
-        width=face_width,
-        bgcolor=ft.Colors.BLACK,
-        padding=ft.Padding.only(left=1, right=1, top=1, bottom=1),
-        border=ft.Border(
-            left=ft.BorderSide(width=1, color=ft.Colors.GREY_500),
-            right=ft.BorderSide(width=1, color=ft.Colors.GREY_500),
-            top=ft.BorderSide(width=1, color=ft.Colors.GREY_500),
-            bottom=ft.BorderSide(width=1, color=ft.Colors.GREY_500),
-        ),
-    )
 
-    # === Final 1/4 page section preview box ===
-    # Explicit size + frame so it visually represents exactly 1/4 of the printable page.
-    # This is the "limit" the user requested for visual accuracy in print layout.
-    preview_box = ft.Container(
-        content=ft.Column(
-            [
-                ft.Text(
-                    "1/4 PAGE SECTION — 112 RACK",
-                    size=10,
-                    weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.WHITE,
-                ),
-                ft.Text(
-                    f"{rack_name}  |  {template} {rack_type}  |  {n_slots} amp slots",
-                    size=8,
-                    color=ft.Colors.WHITE70,
-                ),
-                framed_face,
-            ],
-            spacing=3,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        width=TARGET_WIDTH,
-        height=TARGET_HEIGHT,
-        bgcolor=ft.Colors.with_opacity(0.95, ft.Colors.GREY_800),
+    # === Final assembly inside the 1/4 page box ===
+    face = ft.Column([header, lower], spacing=0, tight=True)
+
+    # Keep overall size close to previous 1/4 page target for UI consistency
+    box_w = LEFT_NUM_W + RACK_CONTENT_W + 10
+    box_h = HEADER_H + RACK_FACE_H + 20
+
+    return ft.Container(
+        content=face,
+        width=box_w,
+        height=box_h,
+        bgcolor=ft.Colors.GREY_800,
         border=ft.Border(
             left=ft.BorderSide(width=2, color=ft.Colors.GREY_400),
             top=ft.BorderSide(width=2, color=ft.Colors.GREY_400),
@@ -375,10 +455,8 @@ def _build_112_visual(page: ft.Page, rack: DataEntry) -> ft.Container:
             bottom=ft.BorderSide(width=2, color=ft.Colors.GREY_400),
         ),
         border_radius=3,
-        padding=ft.Padding.symmetric(horizontal=4, vertical=3),
+        padding=4,
     )
-
-    return preview_box
 
 
 def create_rack_visual_panel(page: ft.Page, app_state) -> ft.Card:
